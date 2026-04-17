@@ -1,0 +1,134 @@
+[
+  {
+    "name": "Hebbal Flyover Underpass",
+    "center": [
+      13.035,
+      77.5965
+    ],
+    "radius_km": 0.3,
+    "type": "underpass",
+    "penalty_db": 25,
+    "structure": "concrete"
+  },
+  {
+    "name": "KR Puram Railway Underpass",
+    "center": [
+      12.996,
+      77.6975
+    ],
+    "radius_km": 0.2,
+    "type": "underpass",
+    "penalty_db": 22,
+    "structure": "concrete"
+  },
+  {
+    "name": "Silk Board Underpass",
+    "center": [
+      12.9175,
+      77.623
+    ],
+    "radius_km": 0.25,
+    "type": "underpass",
+    "penalty_db": 20,
+    "structure": "concrete"
+  },
+  {
+    "name": "Namma Metro Tunnel MG Road",
+    "center": [
+      12.975,
+      77.596
+    ],
+    "radius_km": 0.4,
+    "type": "tunnel",
+    "penalty_db": 45,
+    "structure": "concrete"
+  },
+  {
+    "name": "Namma Metro Tunnel Indiranagar",
+    "center": [
+      12.9784,
+      77.6408
+    ],
+    "radius_km": 0.3,
+    "type": "tunnel",
+    "penalty_db": 45,
+    "structure": "concrete"
+  },
+  {
+    "name": "Namma Metro Tunnel Rajajinagar",
+    "center": [
+      12.991,
+      77.555
+    ],
+    "radius_km": 0.35,
+    "type": "tunnel",
+    "penalty_db": 45,
+    "structure": "concrete"
+  },
+  {
+    "name": "Yeshwanthpur Railway Underpass",
+    "center": [
+      13.022,
+      77.551
+    ],
+    "radius_km": 0.2,
+    "type": "underpass",
+    "penalty_db": 22,
+    "structure": "concrete"
+  },
+  {
+    "name": "Mysore Road Flyover Underpass",
+    "center": [
+      12.958,
+      77.542
+    ],
+    "radius_km": 0.25,
+    "type": "underpass",
+    "penalty_db": 20,
+    "structure": "concrete"
+  },
+  {
+    "name": "Commercial Street Canyon",
+    "center": [
+      12.9815,
+      77.608
+    ],
+    "radius_km": 0.3,
+    "type": "urban_canyon",
+    "penalty_db": 12,
+    "structure": "dense_urban"
+  },
+  {
+    "name": "Chickpet Market Canyon",
+    "center": [
+      12.9672,
+      77.576
+    ],
+    "radius_km": 0.25,
+    "type": "urban_canyon",
+    "penalty_db": 10,
+    "structure": "dense_urban"
+  },
+  {
+    "name": "Brigade Road Canyon",
+    "center": [
+      12.9725,
+      77.607
+    ],
+    "radius_km": 0.2,
+    "type": "urban_canyon",
+    "penalty_db": 11,
+    "structure": "dense_urban"
+  },
+  {
+    "name": "Avenue Road Canyon",
+    "center": [
+      12.97,
+      77.578
+    ],
+    "radius_km": 0.2,
+    "type": "urban_canyon",
+    "penalty_db": 10,
+    "structure": "dense_urban"
+  }
+]

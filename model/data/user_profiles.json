@@ -1,0 +1,60 @@
+{
+  "driver_002": {
+    "choices": [
+      {
+        "timestamp": 1776461103.5101678,
+        "intent": "meeting",
+        "preference": 95.0,
+        "time_bucket": "midday",
+        "time_hour": 14.0,
+        "route": "City Route (Good Signal)",
+        "signal": 72.0,
+        "eta": 28.0
+      },
+      {
+        "timestamp": 1776461105.5432856,
+        "intent": "meeting",
+        "preference": 95.0,
+        "time_bucket": "midday",
+        "time_hour": 14.0,
+        "route": "City Route (Good Signal)",
+        "signal": 72.0,
+        "eta": 28.0
+      },
+      {
+        "timestamp": 1776461107.5802271,
+        "intent": "meeting",
+        "preference": 95.0,
+        "time_bucket": "midday",
+        "time_hour": 14.0,
+        "route": "City Route (Good Signal)",
+        "signal": 72.0,
+        "eta": 28.0
+      },
+      {
+        "timestamp": 1776461109.6131737,
+        "intent": "meeting",
+        "preference": 95.0,
+        "time_bucket": "midday",
+        "time_hour": 14.0,
+        "route": "City Route (Good Signal)",
+        "signal": 72.0,
+        "eta": 28.0
+      },
+      {
+        "timestamp": 1776461111.6498206,
+        "intent": "meeting",
+        "preference": 95.0,
+        "time_bucket": "midday",
+        "time_hour": 14.0,
+        "route": "City Route (Good Signal)",
+        "signal": 72.0,
+        "eta": 28.0
+      }
+    ],
+    "learned_preferences": {
+      "meeting_midday": 95.0,
+      "meeting": 95.0
+    }
+  }
+}
