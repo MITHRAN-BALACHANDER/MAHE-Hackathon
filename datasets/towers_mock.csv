@@ -1,0 +1,16 @@
+tower_id,zone,operator,signal_score,sample_minute
+BLR_TWR_001,MG Road,Jio,93,0
+BLR_TWR_002,MG Road,Airtel,90,5
+BLR_TWR_003,MG Road,Vi,86,10
+BLR_TWR_004,Electronic City,Jio,44,0
+BLR_TWR_005,Electronic City,Airtel,39,5
+BLR_TWR_006,Electronic City,Vi,34,10
+BLR_TWR_007,Whitefield,Jio,71,0
+BLR_TWR_008,Whitefield,Airtel,67,5
+BLR_TWR_009,Whitefield,Vi,62,10
+BLR_TWR_010,Airport Road,Jio,72,0
+BLR_TWR_011,Airport Road,Airtel,69,5
+BLR_TWR_012,Airport Road,Vi,65,10
+BLR_TWR_013,Koramangala,Jio,91,0
+BLR_TWR_014,Koramangala,Airtel,88,5
+BLR_TWR_015,Koramangala,Vi,83,10

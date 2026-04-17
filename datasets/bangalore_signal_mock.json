@@ -1,0 +1,39 @@
+{
+  "zones": [
+    {
+      "name": "MG Road",
+      "signal_strength": "strong",
+      "score": 95,
+      "lat": 12.9716,
+      "lng": 77.5946
+    },
+    {
+      "name": "Electronic City",
+      "signal_strength": "weak",
+      "score": 30,
+      "lat": 12.8399,
+      "lng": 77.667
+    },
+    {
+      "name": "Whitefield",
+      "signal_strength": "medium",
+      "score": 65,
+      "lat": 12.9698,
+      "lng": 77.7499
+    },
+    {
+      "name": "Airport Road",
+      "signal_strength": "medium",
+      "score": 70,
+      "lat": 13.1986,
+      "lng": 77.7066
+    },
+    {
+      "name": "Koramangala",
+      "signal_strength": "strong",
+      "score": 90,
+      "lat": 12.9279,
+      "lng": 77.6271
+    }
+  ]
+}
