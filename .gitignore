@@ -128,3 +128,11 @@ dmypy.json
 *.swp
 *.swo
 *~
+
+venv
+test.py
+test2.py
+
+\
+
+
