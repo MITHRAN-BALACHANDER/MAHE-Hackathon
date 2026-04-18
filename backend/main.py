@@ -64,6 +64,61 @@ app.description = "Cellular network-aware routing with reinforcement learning"
 app.version = "2.0.0"
 
 # -----------------------------------------------------------------------
+# Register new modular routers (enterprise architecture)
+# -----------------------------------------------------------------------
+
+try:
+    from backend.api.auth import router as auth_router
+    app.include_router(auth_router)
+except ImportError:
+    pass  # Auth module not available
+
+try:
+    from backend.api.network import router as network_router
+    app.include_router(network_router)
+except ImportError:
+    pass  # Network detection module not available
+
+# -----------------------------------------------------------------------
+# Enterprise middleware stack
+# -----------------------------------------------------------------------
+
+try:
+    from backend.core.middleware import (
+        RequestIdMiddleware,
+        RequestLoggingMiddleware,
+        ErrorHandlingMiddleware,
+    )
+    app.add_middleware(RequestIdMiddleware)
+    app.add_middleware(RequestLoggingMiddleware)
+    app.add_middleware(ErrorHandlingMiddleware)
+except ImportError:
+    pass  # Middleware not available
+
+# -----------------------------------------------------------------------
+# Initialize service bus
+# -----------------------------------------------------------------------
+
+try:
+    from backend.core.grpc_bus import service_bus
+    service_bus.register("route_service", "2.0.0")
+    service_bus.register("signal_service", "1.0.0")
+    service_bus.register("scoring_service", "1.0.0")
+    service_bus.register("rl_service", "1.0.0")
+
+    @app.get("/api/services/health")
+    async def services_health():
+        """Health check for all registered internal services."""
+        return {
+            "status": "healthy",
+            "services": service_bus.health(),
+            "architecture": "modular_monolith",
+            "communication": "internal_grpc_bus",
+        }
+except ImportError:
+    pass  # Service bus not available
+
+# -----------------------------------------------------------------------
 # TomTom routing client (shared instance with connection reuse)
 # -----------------------------------------------------------------------
 

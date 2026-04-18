@@ -1,9 +1,10 @@
 "use client";
 
-import { Download, Filter, MessageCircle, X } from "lucide-react";
+import { Download, Filter, MessageCircle, Signal, CloudRain, Car, Route, X } from "lucide-react";
 import { useState } from "react";
 import type { TelecomMode } from "@/src/types/route";
 import { ChatBot } from "@/src/components/chat/ChatBot";
+import type { HeatmapFilterType } from "@/src/components/map/MapContainer";
 
 type Props = {
   preference: number;
@@ -16,12 +17,21 @@ type Props = {
   onMaxEtaFactorChange?: (v: number) => void;
   onDownloadOffline?: () => void;
   offlineReady?: boolean;
+  heatmapFilter?: HeatmapFilterType;
+  onHeatmapFilterChange?: (v: HeatmapFilterType) => void;
 };
 
 const PRESET_FILTERS = [
   { label: "Less Traffic", pref: 20 },
   { label: "Balanced", pref: 50 },
   { label: "Best Signal", pref: 90 },
+];
+
+const HEATMAP_OPTIONS: { value: HeatmapFilterType; label: string; icon: typeof Signal; color: string; activeColor: string }[] = [
+  { value: "signal", label: "Signal", icon: Signal, color: "bg-emerald-50 text-emerald-700 border-emerald-200", activeColor: "bg-emerald-500 text-white border-emerald-500" },
+  { value: "weather", label: "Weather", icon: CloudRain, color: "bg-violet-50 text-violet-700 border-violet-200", activeColor: "bg-violet-500 text-white border-violet-500" },
+  { value: "traffic", label: "Traffic", icon: Car, color: "bg-orange-50 text-orange-700 border-orange-200", activeColor: "bg-orange-500 text-white border-orange-500" },
+  { value: "road", label: "Road Type", icon: Route, color: "bg-blue-50 text-blue-700 border-blue-200", activeColor: "bg-blue-500 text-white border-blue-500" },
 ];
 
 export function FilterPanel({
@@ -35,15 +45,18 @@ export function FilterPanel({
   onMaxEtaFactorChange,
   onDownloadOffline,
   offlineReady,
+  heatmapFilter = "signal",
+  onHeatmapFilterChange,
 }: Props) {
   const [open, setOpen] = useState(false);
   const [chatOpen, setChatOpen] = useState(false);
 
   return (
-    <div className="absolute top-4 right-4 z-[1000]">
+    <div id="filter-panel" className="absolute top-4 right-4 z-[1000]">
       {/* Toggle buttons */}
       <div className="flex items-center gap-2">
         <button
+          id="chatbot-btn"
           type="button"
           onClick={() => {
             setChatOpen(!chatOpen);
@@ -69,7 +82,7 @@ export function FilterPanel({
 
       {/* Chatbot panel */}
       {chatOpen && (
-        <div className="mt-2 bg-white rounded-xl shadow-xl w-80 overflow-hidden" style={{ height: 420 }}>
+        <div className="mt-2 bg-white rounded-xl shadow-xl w-80 overflow-hidden" style={{ height: 440 }}>
           <ChatBot
             onClose={() => setChatOpen(false)}
             onApply={(src, dest, pref, tel) => {
@@ -112,6 +125,33 @@ export function FilterPanel({
               </button>
             ))}
           </div>
+
+          {/* Heatmap filter type */}
+          {onHeatmapFilterChange && (
+            <div className="mb-4">
+              <label className="text-xs font-medium text-gray-600 mb-2 block">
+                Heatmap Layer
+              </label>
+              <div className="grid grid-cols-4 gap-1.5">
+                {HEATMAP_OPTIONS.map((opt) => {
+                  const isActive = heatmapFilter === opt.value;
+                  return (
+                    <button
+                      key={opt.value}
+                      type="button"
+                      onClick={() => onHeatmapFilterChange(opt.value)}
+                      className={`heatmap-chip flex flex-col items-center gap-1 py-2 border ${
+                        isActive ? opt.activeColor + " active" : opt.color
+                      }`}
+                    >
+                      <opt.icon size={14} />
+                      <span className="text-[10px]">{opt.label}</span>
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
+          )}
 
           {/* ETA Constraint */}
           {onMaxEtaFactorChange && (

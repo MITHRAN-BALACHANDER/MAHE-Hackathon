@@ -1,0 +1,657 @@
+openapi: "3.1.0"
+info:
+  title: SignalRoute API
+  description: |
+    Cellular network-aware routing API with reinforcement learning.
+    
+    SignalRoute scores candidate routes based on predicted cellular signal quality,
+    allowing users to balance speed against connectivity. The system uses a
+    physics-based ML model (COST-231 Hata + residual correction, R²=0.92) and
+    Thompson Sampling RL for per-user personalization.
+    
+    ## Architecture
+    - **API Gateway**: FastAPI with modular routers
+    - **Internal Communication**: gRPC-style service bus
+    - **ML Model**: PyTorch ResidualSignalNet
+    - **RL Engine**: Thompson Sampling bandit
+    - **Data Sources**: OpenCelliD (towers), TomTom (routing), Nominatim (geocoding)
+  version: "2.0.0"
+  contact:
+    name: SignalRoute Team
+    url: https://github.com/signalroute
+
+servers:
+  - url: http://localhost:8000
+    description: Local development server
+
+tags:
+  - name: Routes
+    description: Route generation, scoring, and comparison
+  - name: Heatmap
+    description: Signal strength heatmap data
+  - name: Towers
+    description: Cell tower data management
+  - name: Prediction
+    description: Signal strength prediction
+  - name: RL Learning
+    description: Reinforcement Learning personalization
+  - name: Offline
+    description: Offline navigation bundles
+  - name: Authentication
+    description: User registration and login
+  - name: Network Detection
+    description: ISP/carrier detection via IP lookup
+  - name: System
+    description: Health checks and internal diagnostics
+
+paths:
+  # ── Route Endpoints ──────────────────────────────────────────────
+  /api/routes:
+    get:
+      tags: [Routes]
+      summary: Get scored and ranked routes
+      description: |
+        Generate candidate routes between source and destination,
+        score them by connectivity and ETA, and return ranked results.
+      parameters:
+        - name: source
+          in: query
+          required: true
+          schema:
+            type: string
+          example: "Electronic City"
+          description: "Start location (name or @lat,lng)"
+        - name: destination
+          in: query
+          required: true
+          schema:
+            type: string
+          example: "MG Road"
+          description: "End location (name or @lat,lng)"
+        - name: preference
+          in: query
+          schema:
+            type: number
+            default: 50
+            minimum: 0
+            maximum: 100
+          description: "Signal vs speed weight (0=fastest, 100=best signal)"
+        - name: telecom
+          in: query
+          schema:
+            type: string
+            enum: [all, jio, airtel, vi, multi]
+            default: all
+          description: "Telecom carrier filter"
+        - name: max_eta_factor
+          in: query
+          schema:
+            type: number
+            default: 1.5
+          description: "Max ETA factor (reject routes slower than fastest × factor)"
+      responses:
+        "200":
+          description: Ranked routes with connectivity scores
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/RoutesResponse"
+              example:
+                source: "Electronic City"
+                destination: "MG Road"
+                preference: 50
+                routes:
+                  - name: "Route 1 via Hosur Road"
+                    eta: 35.2
+                    distance: 18.4
+                    signal_score: 72.5
+                    weighted_score: 68.3
+                    zones: ["Electronic City", "HSR Layout", "Koramangala"]
+                    stability_score: 78
+                    continuity_score: 82
+                recommended_route: "Route 1 via Hosur Road"
+
+  /api/reroute:
+    post:
+      tags: [Routes]
+      summary: Smart reroute for signal recovery
+      description: |
+        When current route enters a signal dead zone, trigger smart reroute
+        with boosted signal preference to find an alternative.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/RerouteRequest"
+      responses:
+        "200":
+          description: Reroute result with advisory message
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/RerouteResponse"
+
+  # ── Heatmap Endpoints ────────────────────────────────────────────
+  /api/heatmap:
+    get:
+      tags: [Heatmap]
+      summary: Get signal strength heatmap
+      description: Returns signal strength scores for all known zones.
+      responses:
+        "200":
+          description: Heatmap zone data
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/HeatmapResponse"
+
+  # ── Prediction Endpoints ─────────────────────────────────────────
+  /api/predict:
+    get:
+      tags: [Prediction]
+      summary: Predict future signal at a zone
+      parameters:
+        - name: zone
+          in: query
+          required: true
+          schema:
+            type: string
+          example: "Koramangala"
+        - name: minutes
+          in: query
+          schema:
+            type: integer
+            default: 15
+          description: "Prediction horizon in minutes"
+      responses:
+        "200":
+          description: Signal prediction result
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PredictionResponse"
+
+  # ── Tower Endpoints ──────────────────────────────────────────────
+  /api/towers:
+    get:
+      tags: [Towers]
+      summary: Get cell tower summary
+      responses:
+        "200":
+          description: Tower data summary
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/TowerSummary"
+
+  # ── Geocoding ────────────────────────────────────────────────────
+  /api/geocode:
+    get:
+      tags: [Routes]
+      summary: Geocode a location query
+      parameters:
+        - name: q
+          in: query
+          required: true
+          schema:
+            type: string
+          example: "Koramangala"
+        - name: limit
+          in: query
+          schema:
+            type: integer
+            default: 5
+      responses:
+        "200":
+          description: Geocode suggestions
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/GeocodeSuggestion"
+
+  # ── RL Learning Endpoints ────────────────────────────────────────
+  /model/auto-route:
+    put:
+      tags: [RL Learning]
+      summary: RL-powered auto-route
+      description: |
+        Uses Thompson Sampling to predict user intent based on historical
+        patterns. Learns after 3-5 trips per user.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/AutoRouteRequest"
+      responses:
+        "200":
+          description: Auto-route result with RL prediction
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AutoRouteResponse"
+
+  /model/record-trip:
+    put:
+      tags: [RL Learning]
+      summary: Record trip for RL learning
+      description: Update Thompson Sampling distributions after trip completion.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/RecordTripRequest"
+      responses:
+        "200":
+          description: Trip recorded successfully
+
+  /model/user-patterns:
+    put:
+      tags: [RL Learning]
+      summary: View learned RL patterns
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                user_id:
+                  type: string
+      responses:
+        "200":
+          description: User's learned patterns
+
+  # ── Authentication ───────────────────────────────────────────────
+  /api/v1/login:
+    post:
+      tags: [Authentication]
+      summary: Login with username and password
+      requestBody:
+        required: true
+        content:
+          application/x-www-form-urlencoded:
+            schema:
+              type: object
+              properties:
+                username:
+                  type: string
+                password:
+                  type: string
+              required: [username, password]
+      responses:
+        "200":
+          description: JWT token
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/TokenResponse"
+        "401":
+          description: Invalid credentials
+
+  /api/v1/register:
+    post:
+      tags: [Authentication]
+      summary: Register a new user
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/UserRegister"
+      responses:
+        "200":
+          description: JWT token for new user
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/TokenResponse"
+        "400":
+          description: Username already exists
+
+  # ── Network Detection ────────────────────────────────────────────
+  /api/detect-network:
+    get:
+      tags: [Network Detection]
+      summary: Detect user ISP/carrier from IP
+      description: |
+        Uses ipapi.co to detect the user's ISP/carrier from their IP address.
+        
+        **Limitations:**
+        - Wi-Fi: Returns broadband ISP, not SIM carrier
+        - VPN: Returns VPN provider, not actual ISP
+        - eSIM: Cannot detect which SIM is active
+      responses:
+        "200":
+          description: Network detection result
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/NetworkDetectResponse"
+
+  /api/network-strength:
+    get:
+      tags: [Network Detection]
+      summary: Estimate network signal strength
+      responses:
+        "200":
+          description: Signal strength estimation
+
+  # ── Offline ──────────────────────────────────────────────────────
+  /api/offline-bundle:
+    get:
+      tags: [Offline]
+      summary: Download offline navigation bundle
+      parameters:
+        - name: source
+          in: query
+          required: true
+          schema:
+            type: string
+        - name: destination
+          in: query
+          required: true
+          schema:
+            type: string
+        - name: preference
+          in: query
+          schema:
+            type: number
+            default: 50
+        - name: telecom
+          in: query
+          schema:
+            type: string
+            default: all
+      responses:
+        "200":
+          description: Complete offline bundle
+
+  # ── System ───────────────────────────────────────────────────────
+  /api/services/health:
+    get:
+      tags: [System]
+      summary: Service bus health check
+      responses:
+        "200":
+          description: Health of all internal services
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status:
+                    type: string
+                    enum: [healthy, degraded, unhealthy]
+                  services:
+                    type: object
+                  architecture:
+                    type: string
+                  communication:
+                    type: string
+
+components:
+  schemas:
+    RoutesResponse:
+      type: object
+      properties:
+        source:
+          type: string
+        destination:
+          type: string
+        preference:
+          type: number
+        routes:
+          type: array
+          items:
+            $ref: "#/components/schemas/RouteOption"
+        recommended_route:
+          type: string
+
+    RouteOption:
+      type: object
+      properties:
+        name:
+          type: string
+        eta:
+          type: number
+          description: "Estimated time in minutes"
+        distance:
+          type: number
+          description: "Distance in km"
+        signal_score:
+          type: number
+          description: "Signal quality score 0-100"
+        weighted_score:
+          type: number
+          description: "Combined score (signal × preference + ETA × (1-preference))"
+        zones:
+          type: array
+          items:
+            type: string
+        path:
+          type: array
+          items:
+            $ref: "#/components/schemas/Coordinate"
+        rejected:
+          type: boolean
+        stability_score:
+          type: number
+        continuity_score:
+          type: number
+        signal_variance:
+          type: number
+        bad_zones:
+          type: array
+          items:
+            $ref: "#/components/schemas/BadZone"
+        multi_sim:
+          $ref: "#/components/schemas/MultiSimInfo"
+
+    Coordinate:
+      type: object
+      properties:
+        lat:
+          type: number
+        lng:
+          type: number
+
+    BadZone:
+      type: object
+      properties:
+        start_coord:
+          $ref: "#/components/schemas/Coordinate"
+        end_coord:
+          $ref: "#/components/schemas/Coordinate"
+        length_km:
+          type: number
+        min_signal:
+          type: number
+        time_to_zone_min:
+          type: number
+        zone_duration_min:
+          type: number
+        warning:
+          type: string
+
+    MultiSimInfo:
+      type: object
+      properties:
+        best_carrier:
+          type: string
+        combined_avg_signal:
+          type: number
+        combined_continuity:
+          type: number
+        best_carrier_per_segment:
+          type: array
+          items:
+            type: string
+
+    RerouteRequest:
+      type: object
+      properties:
+        source:
+          type: string
+        destination:
+          type: string
+        current_zone:
+          type: string
+        preference:
+          type: number
+        telecom:
+          type: string
+
+    RerouteResponse:
+      type: object
+      properties:
+        message:
+          type: string
+        selected_route:
+          $ref: "#/components/schemas/RouteOption"
+        advisory:
+          type: string
+
+    HeatmapResponse:
+      type: object
+      properties:
+        zones:
+          type: array
+          items:
+            $ref: "#/components/schemas/HeatmapZone"
+
+    HeatmapZone:
+      type: object
+      properties:
+        name:
+          type: string
+        lat:
+          type: number
+        lng:
+          type: number
+        score:
+          type: number
+        signal_strength:
+          type: string
+          enum: [strong, medium, weak]
+        color:
+          type: string
+
+    PredictionResponse:
+      type: object
+      properties:
+        zone:
+          type: string
+        horizon_minutes:
+          type: integer
+        expected_signal_score:
+          type: number
+        message:
+          type: string
+
+    TowerSummary:
+      type: object
+      properties:
+        source:
+          type: string
+        count:
+          type: integer
+        operators:
+          type: object
+        zones:
+          type: object
+
+    GeocodeSuggestion:
+      type: object
+      properties:
+        city:
+          type: string
+        lat:
+          type: number
+        lon:
+          type: number
+
+    AutoRouteRequest:
+      type: object
+      properties:
+        user_id:
+          type: string
+        origin:
+          $ref: "#/components/schemas/Coordinate"
+        destination:
+          $ref: "#/components/schemas/Coordinate"
+
+    AutoRouteResponse:
+      type: object
+      properties:
+        predicted_intent:
+          type: string
+        confidence:
+          type: number
+        recommended_preference:
+          type: number
+
+    RecordTripRequest:
+      type: object
+      properties:
+        user_id:
+          type: string
+        origin:
+          $ref: "#/components/schemas/Coordinate"
+        destination:
+          $ref: "#/components/schemas/Coordinate"
+        chosen_intent:
+          type: string
+
+    TokenResponse:
+      type: object
+      properties:
+        access_token:
+          type: string
+        token_type:
+          type: string
+        user_id:
+          type: string
+        username:
+          type: string
+
+    UserRegister:
+      type: object
+      properties:
+        username:
+          type: string
+        password:
+          type: string
+        email:
+          type: string
+          format: email
+      required: [username, password, email]
+
+    NetworkDetectResponse:
+      type: object
+      properties:
+        ip:
+          type: string
+        isp:
+          type: string
+          description: "Internet Service Provider name"
+        carrier:
+          type: string
+          description: "Mobile carrier (Jio, Airtel, Vi, etc.)"
+        org:
+          type: string
+        connection_type:
+          type: string
+          enum: [wifi, cellular, unknown]
+        is_vpn:
+          type: boolean
+        country:
+          type: string
+        city:
+          type: string
+        asn:
+          type: string

@@ -5,8 +5,9 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import { ActionButtons } from "@/src/components/actions/ActionButtons";
 import { RouteBottomCard } from "@/src/components/common/RouteBottomCard";
 import { Toast } from "@/src/components/common/Toast";
+import { OnboardingTour } from "@/src/components/common/OnboardingTour";
 import { FilterPanel } from "@/src/components/filters/FilterPanel";
-import { MapContainer } from "@/src/components/map/MapContainer";
+import { MapContainer, type HeatmapFilterType } from "@/src/components/map/MapContainer";
 import { SearchBar } from "@/src/components/search/SearchBar";
 import { RouteSidebar } from "@/src/components/sidebar/RouteSidebar";
 import { useGeolocation } from "@/src/hooks/useGeolocation";
@@ -31,6 +32,7 @@ export default function Home() {
   const [preference, setPreference] = useState(50);
   const [telecom, setTelecom] = useState<TelecomMode>("all");
   const [maxEtaFactor, setMaxEtaFactor] = useState(1.5);
+  const [heatmapFilter, setHeatmapFilter] = useState<HeatmapFilterType>("signal");
 
   // UI state
   const [selectedRouteIndex, setSelectedRouteIndex] = useState(0);
@@ -42,7 +44,7 @@ export default function Home() {
   // Geolocation
   const geo = useGeolocation();
 
-  // Network detection
+  // Network detection (uses both browser API and ISP detection)
   const networkInfo = useNetworkDetect();
 
   // Coordinate-aware location strings: use "@lat,lng" when geocoded
@@ -169,6 +171,34 @@ export default function Home() {
     }
   }, [source, destination, preference, telecom]);
 
+  // Handle pin drag from map
+  const handlePinDrag = useCallback(
+    (type: "source" | "destination", lat: number, lng: number) => {
+      if (type === "source") {
+        setSourceCoords({ lat, lng });
+        // Reverse geocode to get name
+        geocodeService.search(`${lat},${lng}`, 1).then((results) => {
+          if (results.length > 0) {
+            setSource(results[0].city.split(",").slice(0, 2).join(",").trim());
+          }
+        }).catch(() => {});
+      } else {
+        setDestCoords({ lat, lng });
+        geocodeService.search(`${lat},${lng}`, 1).then((results) => {
+          if (results.length > 0) {
+            setDestination(results[0].city.split(",").slice(0, 2).join(",").trim());
+          }
+        }).catch(() => {});
+      }
+      // Re-trigger route search after short delay
+      setTimeout(() => {
+        setSearchTrigger((n) => n + 1);
+        setHasSearched(true);
+      }, 300);
+    },
+    [],
+  );
+
   return (
     <div className="relative h-screen w-screen overflow-hidden bg-white">
       {/* Full-screen map */}
@@ -179,6 +209,8 @@ export default function Home() {
         onRouteClick={handleRouteSelect}
         trackingPosition={trackingPosition}
         userLocation={geo.location}
+        heatmapFilter={heatmapFilter}
+        onPinDrag={handlePinDrag}
       />
 
       {/* Search bar (top-left) */}
@@ -210,6 +242,8 @@ export default function Home() {
         onMaxEtaFactorChange={setMaxEtaFactor}
         onDownloadOffline={hasSearched ? handleDownloadOffline : undefined}
         offlineReady={offlineReady}
+        heatmapFilter={heatmapFilter}
+        onHeatmapFilterChange={setHeatmapFilter}
       />
 
       {/* Route sidebar (left) */}
@@ -234,18 +268,23 @@ export default function Home() {
       )}
 
       {/* Action buttons (bottom-right) */}
-      <ActionButtons
-        tracking={trackingActive}
-        loading={routesLoading || reroute.isPending}
-        onToggleTracking={() => setTrackingActive((v) => !v)}
-        onReroute={handleReroute}
-        onLocateMe={handleLocateMe}
-        geoLoading={geo.loading}
-        geoError={geo.error}
-      />
+      <div id="action-btns">
+        <ActionButtons
+          tracking={trackingActive}
+          loading={routesLoading || reroute.isPending}
+          onToggleTracking={() => setTrackingActive((v) => !v)}
+          onReroute={handleReroute}
+          onLocateMe={handleLocateMe}
+          geoLoading={geo.loading}
+          geoError={geo.error}
+        />
+      </div>
 
       {/* Toast notifications */}
       <Toast message={toastMessage} type={toastType} />
+
+      {/* Onboarding tour (after first signup) */}
+      <OnboardingTour onComplete={() => {}} />
     </div>
   );
 }

@@ -2,6 +2,7 @@
 
 import dynamic from "next/dynamic";
 import type { Coordinate, HeatmapZone, RouteOption } from "@/src/types/route";
+import type { HeatmapFilterType } from "./MapView";
 
 const MapView = dynamic(() => import("./MapView"), {
   ssr: false,
@@ -20,8 +21,12 @@ type Props = {
   onRouteClick?: (index: number) => void;
   trackingPosition?: Coordinate | null;
   userLocation?: Coordinate | null;
+  heatmapFilter?: HeatmapFilterType;
+  onPinDrag?: (type: "source" | "destination", lat: number, lng: number) => void;
 };
 
 export function MapContainer(props: Props) {
   return <MapView {...props} />;
 }
+
+export type { HeatmapFilterType };

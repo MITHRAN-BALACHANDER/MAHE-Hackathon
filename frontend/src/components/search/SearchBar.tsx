@@ -22,6 +22,20 @@ function shortenName(displayName: string): string {
   return displayName.split(",").slice(0, 2).join(",").trim();
 }
 
+/** Highlight matching text in a string */
+function highlightMatch(text: string, query: string) {
+  if (!query || query.length < 1) return text;
+  const idx = text.toLowerCase().indexOf(query.toLowerCase());
+  if (idx === -1) return text;
+  return (
+    <>
+      {text.slice(0, idx)}
+      <span className="font-bold text-blue-600">{text.slice(idx, idx + query.length)}</span>
+      {text.slice(idx + query.length)}
+    </>
+  );
+}
+
 export function SearchBar({
   source,
   destination,
@@ -40,20 +54,25 @@ export function SearchBar({
 
   const currentValue = focusedField === "source" ? source : destination;
 
-  // Debounced geocode search triggered on every keystroke (>= 2 chars)
+  // Debounced geocode search triggered on every keystroke (>= 1 char)
   const triggerGeocode = useCallback((query: string) => {
-    setGeoResults([]);
     if (debounceRef.current) clearTimeout(debounceRef.current);
-    if (query.trim().length < 2) {
+    if (query.trim().length < 1) {
+      setGeoResults([]);
       setIsSearching(false);
       return;
     }
     setIsSearching(true);
+    // Short debounce (150ms) so suggestions feel instant
     debounceRef.current = setTimeout(async () => {
-      const results = await geocodeService.search(query);
-      setGeoResults(results);
+      try {
+        const results = await geocodeService.search(query);
+        setGeoResults(results);
+      } catch {
+        // keep stale results on error
+      }
       setIsSearching(false);
-    }, 350);
+    }, 150);
   }, []);
 
   // Called on every keystroke in either input
@@ -97,10 +116,10 @@ export function SearchBar({
   const showLocationOption = focusedField === "source" && !source && onUseMyLocation;
   const hasDropdown =
     focusedField !== null &&
-    (showLocationOption || isSearching || geoResults.length > 0 || currentValue.trim().length >= 2);
+    (showLocationOption || isSearching || geoResults.length > 0 || currentValue.trim().length >= 1);
 
   return (
-    <div className="absolute top-4 left-4 z-[1100] w-[340px]">
+    <div id="search-bar" className="absolute top-4 left-4 z-[1100] w-[340px]">
       <div className="bg-white rounded-xl shadow-lg overflow-hidden">
         {/* Source input */}
         <div className="flex items-center px-4 py-3 gap-3 border-b border-gray-100">
@@ -176,7 +195,7 @@ export function SearchBar({
           )}
 
           {/* Live geocoded results */}
-          {!isSearching && geoResults.map((sug, i) => (
+          {geoResults.map((sug, i) => (
             <button
               key={`geo-${i}`}
               type="button"
@@ -186,8 +205,8 @@ export function SearchBar({
             >
               <MapPin size={14} className="text-blue-400 mt-0.5 shrink-0" />
               <div className="min-w-0">
-                <p className="text-sm text-gray-800 font-medium truncate">
-                  {shortenName(sug.city)}
+                <p className="text-sm text-gray-800 truncate">
+                  {highlightMatch(shortenName(sug.city), currentValue)}
                 </p>
                 <p className="text-xs text-gray-400 truncate">{sug.city}</p>
               </div>
@@ -205,4 +224,3 @@ export function SearchBar({
     </div>
   );
 }
-
