@@ -2,6 +2,7 @@ import type { Metadata } from "next";
 import { Space_Grotesk, Sora } from "next/font/google";
 import "./globals.css";
 import { QueryProvider } from "@/src/providers/QueryProvider";
+import { AuthProvider } from "@/src/providers/AuthProvider";
 
 const spaceGrotesk = Space_Grotesk({
   variable: "--font-space-grotesk",
@@ -30,7 +31,9 @@ export default function RootLayout({
       className={`${spaceGrotesk.variable} ${sora.variable} h-full antialiased`}
     >
       <body className="h-full w-full overflow-hidden">
-        <QueryProvider>{children}</QueryProvider>
+        <QueryProvider>
+          <AuthProvider>{children}</AuthProvider>
+        </QueryProvider>
       </body>
     </html>
   );
