@@ -58,6 +58,53 @@ type Props = {
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
+
+/** Approximate meters per degree at Bangalore latitude (~12.97 N). */
+const DEG_TO_M_LAT = 111_320;
+const DEG_TO_M_LNG = 111_320 * Math.cos((12.97 * Math.PI) / 180); // ~108,500
+
+/** Buffer distance (meters) around the route for tower visibility. */
+const TOWER_BUFFER_M = 500;
+
+/**
+ * Minimum distance (meters) from a point to a polyline defined by `path`.
+ * Uses flat-Earth approximation -- accurate enough at city scale.
+ */
+function distToPolylineM(
+  ptLat: number,
+  ptLng: number,
+  path: Coordinate[],
+): number {
+  let minDist = Infinity;
+  for (let i = 0; i < path.length - 1; i++) {
+    const ax = (path[i].lng - ptLng) * DEG_TO_M_LNG;
+    const ay = (path[i].lat - ptLat) * DEG_TO_M_LAT;
+    const bx = (path[i + 1].lng - ptLng) * DEG_TO_M_LNG;
+    const by = (path[i + 1].lat - ptLat) * DEG_TO_M_LAT;
+    const dx = bx - ax;
+    const dy = by - ay;
+    const lenSq = dx * dx + dy * dy;
+    let t = lenSq === 0 ? 0 : Math.max(0, Math.min(1, ((-ax) * dx + (-ay) * dy) / lenSq));
+    const projX = ax + t * dx;
+    const projY = ay + t * dy;
+    const d = Math.sqrt(projX * projX + projY * projY);
+    if (d < minDist) minDist = d;
+  }
+  return minDist;
+}
+
+/**
+ * Return only towers within `bufferM` meters of any segment of the route path.
+ */
+function filterTowersNearRoute(
+  towers: TowerMarker[],
+  path: Coordinate[],
+  bufferM: number = TOWER_BUFFER_M,
+): TowerMarker[] {
+  if (!path || path.length < 2) return [];
+  return towers.filter((t) => distToPolylineM(t.lat, t.lng, path) <= bufferM);
+}
+
 function pathToGeoJSON(path: Coordinate[]): GeoJSON.Feature<GeoJSON.LineString> {
   return {
     type: "Feature",
@@ -146,7 +193,7 @@ export default function MapView({
 
     const map = new mapboxgl.Map({
       container: containerRef.current,
-      style: "mapbox://styles/mapbox/light-v11",
+      style: "mapbox://styles/mapbox/dark-v11",
       center: BANGALORE_CENTER,
       zoom: DEFAULT_ZOOM,
       pitch: 0,
@@ -368,7 +415,7 @@ export default function MapView({
   }, [mapLoaded, routes, selectedRouteIndex, onRouteClick, handlePinDragEnd]);
 
   // -----------------------------------------------------------------------
-  // 3. Tower dot markers
+  // 3. Tower dot markers -- only towers near the selected route
   // -----------------------------------------------------------------------
   useEffect(() => {
     if (!mapLoaded || !mapRef.current) return;
@@ -379,7 +426,14 @@ export default function MapView({
 
     if (!towerMarkers || towerMarkers.length === 0) return;
 
-    for (const tower of towerMarkers) {
+    // Filter towers to those within the buffer of the selected route
+    const selectedRoute = routes[selectedRouteIndex];
+    const visibleTowers =
+      selectedRoute?.path?.length >= 2
+        ? filterTowersNearRoute(towerMarkers, selectedRoute.path)
+        : [];
+
+    for (const tower of visibleTowers) {
       const color = OPERATOR_COLORS[tower.operator] ?? "#6b7280";
       const size = tower.signal_score >= 70 ? 8 : tower.signal_score >= 40 ? 7 : 6;
       const opacity = tower.signal_score >= 70 ? 0.9 : tower.signal_score >= 40 ? 0.75 : 0.6;
@@ -399,7 +453,7 @@ export default function MapView({
         .addTo(map);
       towerMarkersRef.current.push(m);
     }
-  }, [mapLoaded, towerMarkers]);
+  }, [mapLoaded, towerMarkers, routes, selectedRouteIndex]);
 
   // -----------------------------------------------------------------------
   // 4. Live tracking marker (pulsing blue dot)
