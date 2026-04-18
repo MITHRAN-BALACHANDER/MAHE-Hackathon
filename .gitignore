@@ -22,7 +22,6 @@ frontend/out/
 # Logs and env
 *.log
 .env
-.env.*
 
 # Build artifacts
 dist/
