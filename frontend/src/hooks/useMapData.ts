@@ -10,6 +10,8 @@ export function useRoutes(params: RouteQueryParams) {
     queryKey: ["routes", params],
     queryFn: () => routeService.getRoutes(params),
     enabled: !!params.source && !!params.destination,
+    staleTime: 30_000,
+    retry: 1,
   });
 }
 

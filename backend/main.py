@@ -280,7 +280,7 @@ def _zones_along_path(path: list[dict]) -> list[str]:
 def _generate_routes_sync(
     src: tuple[float, float], dst: tuple[float, float],
 ) -> list[dict]:
-    """Synthetic fallback routes (straight-line interpolation)."""
+    """Synthetic fallback routes (straight-line interpolation) -- up to 7 routes."""
     total_dist = haversine(src[0], src[1], dst[0], dst[1])
 
     candidates = []
@@ -294,6 +294,7 @@ def _generate_routes_sync(
 
     routes = []
 
+    # 1. Fastest Route -- nearest 2 waypoints, high speed
     fast_via = [c[1] for c in candidates[:2]]
     fast_dist = total_dist * 1.1
     routes.append({
@@ -304,6 +305,7 @@ def _generate_routes_sync(
         "zones": [c[0] for c in candidates[:2]],
     })
 
+    # 2. Balanced Route -- nearest 4 waypoints
     bal_via = [c[1] for c in candidates[:4]]
     bal_dist = total_dist * 1.25
     routes.append({
@@ -314,6 +316,7 @@ def _generate_routes_sync(
         "zones": [c[0] for c in candidates[:4]],
     })
 
+    # 3. Best Signal Route -- prefer high-density zones
     sig_cands = sorted(candidates, key=lambda x: 0 if x[3] == "high" else 1)
     sig_sorted = sorted(sig_cands[:5], key=lambda x: x[2])
     sig_via = [c[1] for c in sig_sorted]
@@ -326,10 +329,65 @@ def _generate_routes_sync(
         "zones": [c[0] for c in sig_sorted],
     })
 
+    # 4. Eco Route -- moderate distance, steady speed
+    eco_via = [c[1] for c in candidates[1:4]] if len(candidates) >= 4 else fast_via
+    eco_dist = total_dist * 1.35
+    routes.append({
+        "name": "Eco Route",
+        "eta": round(eco_dist / 33 * 60, 1),
+        "distance": round(eco_dist, 1),
+        "path": _build_path(src, dst, eco_via, 4),
+        "zones": [c[0] for c in candidates[1:4]] if len(candidates) >= 4 else [c[0] for c in candidates[:2]],
+    })
+
+    # 5. Low Traffic Route -- prefer medium/low density zones (less congested)
+    low_cands = sorted(candidates, key=lambda x: 0 if x[3] == "low" else (1 if x[3] == "medium" else 2))
+    low_sorted = sorted(low_cands[:4], key=lambda x: x[2])
+    low_via = [c[1] for c in low_sorted]
+    low_dist = total_dist * 1.30
+    routes.append({
+        "name": "Low Traffic Route",
+        "eta": round(low_dist / 36 * 60, 1),
+        "distance": round(low_dist, 1),
+        "path": _build_path(src, dst, low_via, 4),
+        "zones": [c[0] for c in low_sorted],
+    })
+
+    # 6. Highway Route -- medium waypoints, higher speed
+    hw_via = [c[1] for c in candidates[:3]]
+    hw_dist = total_dist * 1.20
+    routes.append({
+        "name": "Highway Route",
+        "eta": round(hw_dist / 45 * 60, 1),
+        "distance": round(hw_dist, 1),
+        "path": _build_path(src, dst, hw_via, 3),
+        "zones": [c[0] for c in candidates[:3]],
+    })
+
+    # 7. Scenic Route -- many waypoints, relaxed speed
+    sc_via = [c[1] for c in candidates[:6]]
+    sc_dist = total_dist * 1.50
+    routes.append({
+        "name": "Scenic Route",
+        "eta": round(sc_dist / 28 * 60, 1),
+        "distance": round(sc_dist, 1),
+        "path": _build_path(src, dst, sc_via, 5),
+        "zones": [c[0] for c in candidates[:6]],
+    })
+
     return routes
 
 
-_ROUTE_NAMES = ["Fastest Route", "Balanced Route", "Best Signal Route"]
+_ROUTE_NAMES = [
+    "Fastest Route",
+    "Balanced Route",
+    "Best Signal Route",
+    "Eco Route",
+    "Low Traffic Route",
+    "Highway Route",
+    "Scenic Route",
+]
+_MAX_ROUTES = 7  # hard cap on routes returned to the frontend
 
 
 async def _generate_routes(
@@ -372,6 +430,19 @@ async def _generate_routes(
                         "zones": zones,
                         "traffic_delay": tt.get("traffic_delay", 0),
                     })
+                # Cap at _MAX_ROUTES
+                routes = routes[:_MAX_ROUTES]
+
+                # If TomTom returned fewer than 5 routes, pad with synthetic
+                # alternatives so the map always shows visually distinct paths.
+                if len(routes) < 5:
+                    synthetic = _generate_routes_sync(src, dst)
+                    existing_names = {r["name"] for r in routes}
+                    for syn in synthetic:
+                        if len(routes) >= 5:
+                            break
+                        if syn["name"] not in existing_names:
+                            routes.append(syn)
 
     # Fetch real cell towers along each route from OpenCelliD (parallel via executor)
     loop = asyncio.get_event_loop()

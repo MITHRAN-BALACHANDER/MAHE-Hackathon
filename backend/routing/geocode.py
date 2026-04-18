@@ -29,6 +29,9 @@ _NOMINATIM_REVERSE_URL = os.environ.get(
 _USER_AGENT = "SignalRoute/1.0 (hackathon; github.com/MAHE-Hackathon)"
 _TIMEOUT_S = 5.0
 
+# Bounding box that biases forward-geocode results toward Bengaluru
+_BANGALORE_VIEWBOX = os.environ.get("NOMINATIM_VIEWBOX", "77.35,12.70,77.82,13.20")
+
 
 def _cache_put(key: str, value: list["GeoResult"]) -> None:
     """Insert into bounded LRU cache, evicting oldest if full."""
@@ -50,6 +53,8 @@ async def geocode_query(
     limit: int = 5,
     *,
     countrycodes: str = "in",
+    viewbox: str = _BANGALORE_VIEWBOX,
+    bounded: int = 0,
 ) -> list[GeoResult]:
     """Geocode a free-form location string using Nominatim.
 
@@ -58,12 +63,14 @@ async def geocode_query(
     query : free-form text, e.g. ``"MIT Bangalore"`` or ``"MG Road"``
     limit : maximum number of candidate results (1-10)
     countrycodes : ISO 3166-1 alpha-2 filter. Default ``"in"`` (India).
+    viewbox : bias results toward this bounding box (minlon,minlat,maxlon,maxlat).
+    bounded : 0 = prefer viewbox, 1 = restrict to viewbox only.
 
     Returns
     -------
     List of :class:`GeoResult` dicts. Empty on failure or no results.
     """
-    cache_key = f"{query.lower().strip()}:{limit}:{countrycodes}"
+    cache_key = f"{query.lower().strip()}:{limit}:{countrycodes}:{viewbox}:{bounded}"
     if cache_key in _CACHE:
         _CACHE.move_to_end(cache_key)  # refresh LRU position
         return _CACHE[cache_key]
@@ -72,15 +79,19 @@ async def geocode_query(
     async with _NOMINATIM_SEMAPHORE:
         try:
             async with httpx.AsyncClient(timeout=_TIMEOUT_S) as client:
+                params: dict = {
+                    "q": query,
+                    "format": "json",
+                    "limit": limit,
+                    "addressdetails": 0,
+                    "countrycodes": countrycodes,
+                }
+                if viewbox:
+                    params["viewbox"] = viewbox
+                    params["bounded"] = bounded
                 resp = await client.get(
                     _NOMINATIM_URL,
-                    params={
-                        "q": query,
-                        "format": "json",
-                        "limit": limit,
-                        "addressdetails": 0,
-                        "countrycodes": countrycodes,
-                    },
+                    params=params,
                     headers={"User-Agent": _USER_AGENT},
                 )
                 resp.raise_for_status()
@@ -139,8 +150,8 @@ async def reverse_geocode_query(lat: float, lon: float) -> GeoResult | None:
                         "lat": lat,
                         "lon": lon,
                         "format": "json",
-                        "zoom": 16,          # neighbourhood level
-                        "addressdetails": 0,
+                        "zoom": 14,
+                        "addressdetails": 1,
                     },
                     headers={"User-Agent": _USER_AGENT},
                 )
@@ -163,8 +174,42 @@ async def reverse_geocode_query(lat: float, lon: float) -> GeoResult | None:
         _cache_put(cache_key, [])
         return None
 
+    # Build a readable name from structured address components
+    addr = data.get("address", {})
+    area = (
+        addr.get("neighbourhood")
+        or addr.get("village")
+        or addr.get("town")
+        or ""
+    )
+    if not area:
+        suburb = addr.get("suburb", "")
+        if suburb and "Ward" not in suburb and "Corporation" not in suburb:
+            area = suburb
+    if not area:
+        area = (
+            addr.get("county", "")
+            .replace(" taluku", "")
+            .replace(" taluk", "")
+            .strip()
+        )
+    city = (
+        addr.get("city")
+        or addr.get("state_district", "")
+            .replace(" Urban District", "")
+            .replace(" Rural District", "")
+            .strip()
+        or ""
+    )
+    if city == area:
+        city = ""
+    if area or city:
+        display_name = f"{area}, {city}".strip(", ") if area and city else (area or city)
+    else:
+        display_name = data["display_name"]
+
     result = GeoResult(
-        city=data["display_name"],
+        city=display_name,
         lat=float(data["lat"]),
         lon=float(data["lon"]),
     )

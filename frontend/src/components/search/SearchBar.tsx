@@ -51,6 +51,7 @@ export function SearchBar({
   const [geoResults, setGeoResults] = useState<GeocodeSuggestion[]>([]);
   const [isSearching, setIsSearching] = useState(false);
   const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const containerRef = useRef<HTMLDivElement>(null);
 
   const currentValue = focusedField === "source" ? source : destination;
 
@@ -119,7 +120,7 @@ export function SearchBar({
     (showLocationOption || isSearching || geoResults.length > 0 || currentValue.trim().length >= 1);
 
   return (
-    <div id="search-bar" className="absolute top-4 left-4 z-[1100] w-[340px]">
+    <div id="search-bar" ref={containerRef} className="absolute top-4 left-4 z-[1100] w-[340px]">
       <div className="bg-white rounded-xl shadow-lg overflow-hidden">
         {/* Source input */}
         <div className="flex items-center px-4 py-3 gap-3 border-b border-gray-100">
@@ -130,7 +131,11 @@ export function SearchBar({
             value={source}
             onChange={(e) => handleInput(e.target.value, "source")}
             onFocus={() => { setFocusedField("source"); triggerGeocode(source); }}
-            onBlur={() => setTimeout(() => setFocusedField(null), 200)}
+            onBlur={() => setTimeout(() => {
+              if (!containerRef.current?.contains(document.activeElement)) {
+                setFocusedField(null);
+              }
+            }, 50)}
             onKeyDown={(e) => { if (e.key === "Enter" && source && destination) onSearch(); }}
             className="flex-1 text-sm text-gray-800 placeholder-gray-400 outline-none bg-transparent"
           />
@@ -154,7 +159,11 @@ export function SearchBar({
             value={destination}
             onChange={(e) => handleInput(e.target.value, "dest")}
             onFocus={() => { setFocusedField("dest"); triggerGeocode(destination); }}
-            onBlur={() => setTimeout(() => setFocusedField(null), 200)}
+            onBlur={() => setTimeout(() => {
+              if (!containerRef.current?.contains(document.activeElement)) {
+                setFocusedField(null);
+              }
+            }, 50)}
             onKeyDown={(e) => { if (e.key === "Enter" && source && destination) onSearch(); }}
             className="flex-1 text-sm text-gray-800 placeholder-gray-400 outline-none bg-transparent"
           />

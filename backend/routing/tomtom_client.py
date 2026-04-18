@@ -18,7 +18,8 @@ TOMTOM_BASE_URL: str = os.getenv(
 ).rstrip("/")
 
 _REQUEST_TIMEOUT_S: float = 5.0
-_MAX_ALTERNATIVES: int = 2
+# TomTom calculateRoute supports up to 5 alternatives (6 routes total).
+_MAX_ALTERNATIVES: int = 5
 
 
 @dataclass(frozen=True)
@@ -59,40 +60,97 @@ def _generate_mock_routes(
     origin: tuple[float, float],
     destination: tuple[float, float],
 ) -> list[TomTomRoute]:
-    """Straight-line interpolation fallback (2 routes with slight variation)."""
+    """Straight-line interpolation fallback producing 7 geometrically diverse routes."""
     o_lat, o_lon = origin
     d_lat, d_lon = destination
     mid_lat = (o_lat + d_lat) / 2
     mid_lon = (o_lon + d_lon) / 2
 
-    # Rough distance estimate (degrees -> km, ~111 km per degree)
     dlat = abs(d_lat - o_lat)
     dlon = abs(d_lon - o_lon)
     approx_km = ((dlat ** 2 + dlon ** 2) ** 0.5) * 111.0
     base_eta = max(approx_km / 40.0 * 60.0, 5.0)  # minutes at ~40 km/h
 
-    route_a = TomTomRoute(
-        eta=round(base_eta, 2),
-        geometry=[
-            {"lat": o_lat, "lng": o_lon},
-            {"lat": mid_lat, "lng": mid_lon},
-            {"lat": d_lat, "lng": d_lon},
-        ],
-        traffic_delay=round(base_eta * 0.1, 2),
-    )
+    # Lateral offsets to create distinct paths (scaled to route length)
+    lat_off = max(dlat * 0.35, 0.008)
+    lon_off = max(dlon * 0.35, 0.008)
 
-    route_b = TomTomRoute(
-        eta=round(base_eta * 1.15, 2),
-        geometry=[
-            {"lat": o_lat, "lng": o_lon},
-            {"lat": mid_lat + 0.008, "lng": mid_lon - 0.005},
-            {"lat": mid_lat - 0.003, "lng": mid_lon + 0.006},
-            {"lat": d_lat, "lng": d_lon},
-        ],
-        traffic_delay=round(base_eta * 0.18, 2),
-    )
-
-    return [route_a, route_b]
+    return [
+        # Route 1: direct (fastest)
+        TomTomRoute(
+            eta=round(base_eta, 2),
+            geometry=[
+                {"lat": o_lat, "lng": o_lon},
+                {"lat": mid_lat, "lng": mid_lon},
+                {"lat": d_lat, "lng": d_lon},
+            ],
+            traffic_delay=round(base_eta * 0.08, 2),
+        ),
+        # Route 2: slight northern detour
+        TomTomRoute(
+            eta=round(base_eta * 1.10, 2),
+            geometry=[
+                {"lat": o_lat, "lng": o_lon},
+                {"lat": mid_lat + lat_off * 0.5, "lng": mid_lon - lon_off * 0.3},
+                {"lat": d_lat, "lng": d_lon},
+            ],
+            traffic_delay=round(base_eta * 0.12, 2),
+        ),
+        # Route 3: slight southern detour
+        TomTomRoute(
+            eta=round(base_eta * 1.15, 2),
+            geometry=[
+                {"lat": o_lat, "lng": o_lon},
+                {"lat": mid_lat - lat_off * 0.5, "lng": mid_lon + lon_off * 0.3},
+                {"lat": d_lat, "lng": d_lon},
+            ],
+            traffic_delay=round(base_eta * 0.15, 2),
+        ),
+        # Route 4: wider northern arc
+        TomTomRoute(
+            eta=round(base_eta * 1.22, 2),
+            geometry=[
+                {"lat": o_lat, "lng": o_lon},
+                {"lat": o_lat + lat_off * 0.6, "lng": mid_lon},
+                {"lat": mid_lat + lat_off, "lng": mid_lon},
+                {"lat": d_lat, "lng": d_lon},
+            ],
+            traffic_delay=round(base_eta * 0.10, 2),
+        ),
+        # Route 5: wider southern arc
+        TomTomRoute(
+            eta=round(base_eta * 1.28, 2),
+            geometry=[
+                {"lat": o_lat, "lng": o_lon},
+                {"lat": o_lat - lat_off * 0.6, "lng": mid_lon},
+                {"lat": mid_lat - lat_off, "lng": mid_lon},
+                {"lat": d_lat, "lng": d_lon},
+            ],
+            traffic_delay=round(base_eta * 0.20, 2),
+        ),
+        # Route 6: eastern bypass
+        TomTomRoute(
+            eta=round(base_eta * 1.33, 2),
+            geometry=[
+                {"lat": o_lat, "lng": o_lon},
+                {"lat": mid_lat - lat_off * 0.3, "lng": mid_lon + lon_off},
+                {"lat": mid_lat + lat_off * 0.3, "lng": mid_lon + lon_off * 0.8},
+                {"lat": d_lat, "lng": d_lon},
+            ],
+            traffic_delay=round(base_eta * 0.22, 2),
+        ),
+        # Route 7: western bypass
+        TomTomRoute(
+            eta=round(base_eta * 1.40, 2),
+            geometry=[
+                {"lat": o_lat, "lng": o_lon},
+                {"lat": mid_lat + lat_off * 0.3, "lng": mid_lon - lon_off},
+                {"lat": mid_lat - lat_off * 0.3, "lng": mid_lon - lon_off * 0.8},
+                {"lat": d_lat, "lng": d_lon},
+            ],
+            traffic_delay=round(base_eta * 0.25, 2),
+        ),
+    ]
 
 
 class TomTomClient:

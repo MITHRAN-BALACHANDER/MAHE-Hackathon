@@ -13,6 +13,23 @@ const ROUTE_COLORS = {
   alt: "#93b5f5",
 } as const;
 
+// Distinct colors for each alternative route so all paths are visually separable
+const ROUTE_ALT_PALETTE = [
+  "#93b5f5",  // light blue
+  "#4ade80",  // green
+  "#fb923c",  // orange
+  "#c084fc",  // purple
+  "#34d399",  // emerald
+  "#f472b6",  // pink
+];
+
+function getRouteColor(index: number, selectedIndex: number): string {
+  if (index === selectedIndex) return ROUTE_COLORS.selected;
+  // Map each non-selected route to its own palette slot
+  const altPos = index < selectedIndex ? index : index - 1;
+  return ROUTE_ALT_PALETTE[altPos % ROUTE_ALT_PALETTE.length];
+}
+
 export type HeatmapFilterType = "signal" | "weather" | "traffic" | "road";
 
 const HEATMAP_COLORS: Record<HeatmapFilterType, { strong: string; medium: string; weak: string }> = {
@@ -194,9 +211,9 @@ export default function MapView({
       const latlngs: L.LatLngExpression[] = route.path.map((p) => [p.lat, p.lng]);
 
       const polyline = L.polyline(latlngs, {
-        color: isSelected ? ROUTE_COLORS.selected : ROUTE_COLORS.alt,
+        color: getRouteColor(i, selectedRouteIndex),
         weight: isSelected ? 6 : 4,
-        opacity: isSelected ? 1 : 0.6,
+        opacity: isSelected ? 1 : 0.65,
         lineJoin: "round",
         lineCap: "round",
         interactive: true,
@@ -228,12 +245,13 @@ export default function MapView({
 
       // Pointer cursor on hover for alt routes
       if (!isSelected) {
+        const altColor = getRouteColor(i, selectedRouteIndex);
         polyline.on("mouseover", () => {
-          (polyline as L.Polyline).setStyle({ weight: 6, opacity: 0.85 });
+          (polyline as L.Polyline).setStyle({ weight: 6, opacity: 0.9, color: altColor });
           map.getContainer().style.cursor = "pointer";
         });
         polyline.on("mouseout", () => {
-          (polyline as L.Polyline).setStyle({ weight: 4, opacity: 0.6 });
+          (polyline as L.Polyline).setStyle({ weight: 4, opacity: 0.65, color: altColor });
           map.getContainer().style.cursor = "";
         });
       }

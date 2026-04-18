@@ -47,18 +47,17 @@ export default function Home() {
   // Network detection (uses both browser API and ISP detection)
   const networkInfo = useNetworkDetect();
 
-  // Coordinate-aware location strings: use "@lat,lng" when geocoded
-  const routeSource = sourceCoords ? `@${sourceCoords.lat},${sourceCoords.lng}` : source;
-  const routeDest   = destCoords   ? `@${destCoords.lat},${destCoords.lng}`   : destination;
+  // Snapshot: source/dest resolved at search-time to prevent React Query cancels
+  const [snapshotSrc, setSnapshotSrc] = useState("");
+  const [snapshotDst, setSnapshotDst] = useState("");
 
-  // Only query routes when we have both source and destination and user has searched
+  // Route query params -- source/dest are snapshotted, filters are reactive
   const queryParams = useMemo(
     () =>
-      hasSearched && source && destination
-        ? { source: routeSource, destination: routeDest, preference, telecom, max_eta_factor: maxEtaFactor }
+      hasSearched && snapshotSrc && snapshotDst
+        ? { source: snapshotSrc, destination: snapshotDst, preference, telecom, max_eta_factor: maxEtaFactor }
         : null,
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-    [routeSource, routeDest, preference, telecom, maxEtaFactor, searchTrigger, hasSearched],
+    [hasSearched, snapshotSrc, snapshotDst, preference, telecom, maxEtaFactor, searchTrigger],
   );
 
   const { data: routeData, isLoading: routesLoading } = useRoutes(
@@ -101,12 +100,16 @@ export default function Home() {
 
   const handleSearch = useCallback(() => {
     if (!source || !destination) return;
+    const src = sourceCoords ? `@${sourceCoords.lat},${sourceCoords.lng}` : source;
+    const dst = destCoords ? `@${destCoords.lat},${destCoords.lng}` : destination;
+    setSnapshotSrc(src);
+    setSnapshotDst(dst);
     setSearchTrigger((n) => n + 1);
     setHasSearched(true);
     setSidebarOpen(true);
     setSelectedRouteIndex(0);
     setSuggestedRoute("");
-  }, [source, destination]);
+  }, [source, destination, sourceCoords, destCoords]);
 
   const handleRouteSelect = useCallback((index: number) => {
     setSelectedRouteIndex(index);
@@ -149,6 +152,8 @@ export default function Home() {
       setDestination(chatDest);
       setPreference(pref);
       setTelecom(tel);
+      setSnapshotSrc(chatSource);
+      setSnapshotDst(chatDest);
       setSuggestedRoute("Suggested");
       setHasSearched(true);
       setSearchTrigger((n) => n + 1);
