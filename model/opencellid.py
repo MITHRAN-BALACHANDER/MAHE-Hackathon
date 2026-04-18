@@ -13,6 +13,7 @@ MNC -> Operator mapping (Karnataka circle):
 
 import time
 import math
+import os
 import requests
 import pandas as pd
 import numpy as np
@@ -20,7 +21,10 @@ from pathlib import Path
 
 from model.config import ZONES, DATA_DIR
 
-API_KEY = "pk.20f088b6c9265fd29a74d4ee4b169239"
+# Read API key from environment (set via .env / OPENCELLID_API_KEY)
+# Evaluated lazily in functions so dotenv can be loaded by the entry point first.
+def _api_key() -> str:
+    return os.environ.get("OPENCELLID_API_KEY", "")
 BASE_URL = "https://opencellid.org"
 INDIA_MCC = {404, 405}
 
@@ -111,7 +115,7 @@ def fetch_cells_in_bbox(
 ) -> list[dict]:
     """Fetch cell towers in a bounding box from OpenCelliD."""
     params = {
-        "key": API_KEY,
+        "key": _api_key(),
         "BBOX": f"{bbox[0]},{bbox[1]},{bbox[2]},{bbox[3]}",
         "format": "json",
         "limit": limit,
@@ -134,7 +138,7 @@ def fetch_cells_in_bbox(
 def fetch_cell_count_in_bbox(bbox: tuple[float, float, float, float]) -> int:
     """Get the number of cells in a bounding box (costs 2 API credits)."""
     params = {
-        "key": API_KEY,
+        "key": _api_key(),
         "BBOX": f"{bbox[0]},{bbox[1]},{bbox[2]},{bbox[3]}",
         "format": "json",
     }
@@ -319,6 +323,97 @@ def refresh_towers(max_per_zone: int = 50) -> pd.DataFrame:
     if len(df) > 0:
         save_real_towers(df)
     return df
+
+
+def fetch_towers_for_path(
+    path: list[dict],
+    sample_every_n: int = 30,
+    max_towers: int = 200,
+    radius_km: float = 0.8,
+) -> pd.DataFrame:
+    """Fetch real cell towers near a route from OpenCelliD in real time.
+
+    Samples every ``sample_every_n`` points along the path, queries a small
+    bounding box around each sample, de-duplicates, and returns a DataFrame
+    with the same schema as ``get_towers()``.
+
+    Parameters
+    ----------
+    path : list of {"lat": float, "lng": float} from TomTom / synthetic
+    sample_every_n : query every Nth point (reduces API calls)
+    max_towers : cap total towers returned
+    radius_km : query radius around each sample point
+    """
+    if not _api_key():
+        return pd.DataFrame()
+
+    seen_ids: set = set()
+    towers: list[dict] = []
+
+    # Deduplicate sample points by snapping to a grid
+    sampled = path[::max(1, sample_every_n)]
+    if path and path[-1] not in sampled:
+        sampled.append(path[-1])
+
+    for pt in sampled:
+        if len(towers) >= max_towers:
+            break
+
+        lat, lng = pt["lat"], pt["lng"]
+        # Bounding box: radius_km in each direction
+        half = min(radius_km / 111.0, 0.012)
+        bbox = (
+            round(lat - half, 6), round(lng - half, 6),
+            round(lat + half, 6), round(lng + half, 6),
+        )
+
+        cells = fetch_cells_in_bbox(bbox, limit=50)
+        for cell in cells:
+            mcc = cell.get("mcc", 0)
+            if mcc not in INDIA_MCC:
+                continue
+            cid = (mcc, cell.get("mnc"), cell.get("lac"), cell.get("cellid"))
+            if cid in seen_ids:
+                continue
+            seen_ids.add(cid)
+
+            mnc = cell.get("mnc", 0)
+            radio = cell.get("radio", "LTE")
+            dbm = cell.get("averageSignalStrength", 0)
+
+            towers.append({
+                "tower_id": f"OCI_{mcc}_{mnc}_{cell.get('cellid', 0)}",
+                "lat": cell.get("lat", lat),
+                "lng": cell.get("lon", lng),
+                "operator": _mnc_to_operator(mnc),
+                "signal_score": _signal_dbm_to_score(dbm, radio),
+                "frequency_mhz": _radio_to_freq(radio),
+                "tx_power_dbm": _radio_to_tx_power(radio),
+                "height_m": _radio_to_height(radio),
+                "zone": "route",
+                "radio": radio,
+                "range_m": cell.get("range", 1000),
+                "samples": cell.get("samples", 0),
+                "avg_signal_dbm": dbm,
+                "mcc": mcc,
+                "mnc": mnc,
+                "lac": cell.get("lac", 0),
+                "cellid": cell.get("cellid", 0),
+            })
+
+        time.sleep(0.2)
+
+    if not towers:
+        return pd.DataFrame()
+
+    df = pd.DataFrame(towers[:max_towers])
+    # Return only the columns the scoring pipeline needs
+    core_cols = ["tower_id", "lat", "lng", "operator", "signal_score",
+                 "frequency_mhz", "tx_power_dbm", "height_m", "zone"]
+    for col in core_cols:
+        if col not in df.columns:
+            df[col] = None
+    return df[core_cols]
 
 
 if __name__ == "__main__":

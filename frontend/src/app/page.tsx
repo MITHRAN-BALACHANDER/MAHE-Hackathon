@@ -13,7 +13,7 @@ import { useGeolocation } from "@/src/hooks/useGeolocation";
 import { useHeatmap, useReroute, useRoutes } from "@/src/hooks/useMapData";
 import { useNetworkDetect } from "@/src/hooks/useNetworkDetect";
 import { useTracking } from "@/src/hooks/useTracking";
-import { offlineService } from "@/src/services/api";
+import { offlineService, geocodeService } from "@/src/services/api";
 import type { TelecomMode } from "@/src/types/route";
 
 export default function Home() {
@@ -80,41 +80,20 @@ export default function Home() {
   const toastMessage = reroute.data?.advisory ?? badZoneWarning;
   const toastType = reroute.data ? ("reroute" as const) : ("info" as const);
 
-  // When geolocation resolves, reverse-geocode to a readable name
+  // When geolocation resolves, reverse-geocode GPS coords to a readable name via Nominatim
   useEffect(() => {
     if (geo.location && !source) {
-      // Use nearest known area name based on coords (Bangalore area)
-      const areas = [
-        { name: "Electronic City", lat: 12.839, lng: 77.678 },
-        { name: "Koramangala", lat: 12.935, lng: 77.624 },
-        { name: "Indiranagar", lat: 12.972, lng: 77.641 },
-        { name: "Whitefield", lat: 12.970, lng: 77.750 },
-        { name: "MG Road", lat: 12.975, lng: 77.607 },
-        { name: "Jayanagar", lat: 12.930, lng: 77.584 },
-        { name: "HSR Layout", lat: 12.912, lng: 77.638 },
-        { name: "Hebbal", lat: 13.035, lng: 77.597 },
-        { name: "Marathahalli", lat: 12.956, lng: 77.701 },
-        { name: "BTM Layout", lat: 12.916, lng: 77.616 },
-        { name: "Rajajinagar", lat: 12.988, lng: 77.557 },
-        { name: "Silk Board", lat: 12.917, lng: 77.623 },
-        { name: "Peenya", lat: 13.032, lng: 77.523 },
-        { name: "Yelahanka", lat: 13.101, lng: 77.594 },
-        { name: "Bannerghatta", lat: 12.880, lng: 77.598 },
-        { name: "KR Puram", lat: 13.008, lng: 77.696 },
-        { name: "Sarjapur Road", lat: 12.910, lng: 77.685 },
-        { name: "JP Nagar", lat: 12.907, lng: 77.586 },
-        { name: "Majestic", lat: 12.977, lng: 77.572 },
-      ];
-      let closest = areas[0];
-      let minDist = Infinity;
-      for (const a of areas) {
-        const d = Math.hypot(a.lat - geo.location.lat, a.lng - geo.location.lng);
-        if (d < minDist) {
-          minDist = d;
-          closest = a;
-        }
-      }
-      setSource(closest.name);
+      const { lat, lng } = geo.location;
+      geocodeService
+        .search(`${lat},${lng}`, 1)
+        .then((results) => {
+          if (results.length > 0) {
+            const short = results[0].city.split(",").slice(0, 2).join(",").trim();
+            setSource(short);
+            setSourceCoords({ lat: results[0].lat, lng: results[0].lon });
+          }
+        })
+        .catch(() => {/* silently ignore */});
     }
   }, [geo.location, source]);
 

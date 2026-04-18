@@ -5,14 +5,6 @@ import { useCallback, useRef, useState } from "react";
 
 import { geocodeService, type GeocodeSuggestion } from "@/src/services/api";
 
-const QUICK_LOCATIONS = [
-  "MIT", "Airport", "Koramangala", "Indiranagar", "Whitefield",
-  "Electronic City", "MG Road", "Jayanagar", "HSR Layout", "Hebbal",
-  "Marathahalli", "BTM Layout", "Rajajinagar", "Silk Board", "Peenya",
-  "Yelahanka", "Bannerghatta", "KR Puram", "Sarjapur Road", "Hosur Road",
-  "Majestic", "JP Nagar",
-];
-
 type Props = {
   source: string;
   destination: string;
@@ -79,19 +71,6 @@ export function SearchBar({
     [onSourceChange, onDestinationChange, onSourceCoords, onDestCoords, triggerGeocode],
   );
 
-  // Select a static preset (no coords needed — backend knows these names)
-  const handleStaticSelect = useCallback(
-    (loc: string) => {
-      if (focusedField === "source") onSourceChange(loc);
-      else onDestinationChange(loc);
-      setGeoResults([]);
-      setFocusedField(null);
-      const other = focusedField === "source" ? destination : source;
-      if (other) setTimeout(onSearch, 100);
-    },
-    [focusedField, source, destination, onSourceChange, onDestinationChange, onSearch],
-  );
-
   // Select a geocoded result — passes lat/lon to parent for @lat,lng routing
   const handleGeoSelect = useCallback(
     (sug: GeocodeSuggestion) => {
@@ -115,18 +94,10 @@ export function SearchBar({
     ],
   );
 
-  // What to show in the dropdown
-  const useStaticList = currentValue.trim().length < 2;
-  const staticFiltered = QUICK_LOCATIONS.filter(
-    (l) =>
-      (useStaticList || l.toLowerCase().includes(currentValue.toLowerCase())) &&
-      l.toLowerCase() !== (focusedField === "source" ? destination : source).toLowerCase(),
-  );
   const showLocationOption = focusedField === "source" && !source && onUseMyLocation;
   const hasDropdown =
     focusedField !== null &&
-    (showLocationOption || isSearching || geoResults.length > 0 ||
-      (useStaticList && staticFiltered.length > 0));
+    (showLocationOption || isSearching || geoResults.length > 0 || currentValue.trim().length >= 2);
 
   return (
     <div className="absolute top-4 left-4 z-[1100] w-[340px]">
@@ -223,19 +194,12 @@ export function SearchBar({
             </button>
           ))}
 
-          {/* Static preset list (shown when input is short or empty) */}
-          {useStaticList && staticFiltered.slice(0, 8).map((loc) => (
-            <button
-              key={loc}
-              type="button"
-              onMouseDown={(e) => e.preventDefault()}
-              onClick={() => handleStaticSelect(loc)}
-              className="w-full text-left px-4 py-2.5 text-sm text-gray-700 hover:bg-gray-50 flex items-center gap-3 cursor-pointer"
-            >
-              <Search size={14} className="text-gray-400 shrink-0" />
-              {loc}
-            </button>
-          ))}
+          {/* No results state */}
+          {!isSearching && geoResults.length === 0 && currentValue.trim().length >= 2 && (
+            <div className="px-4 py-3 text-sm text-gray-400">
+              No results found for &quot;{currentValue}&quot;
+            </div>
+          )}
         </div>
       )}
     </div>

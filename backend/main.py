@@ -42,7 +42,7 @@ from model.explainability import explain_recommendation, compare_routes_summary
 from model.smart_preference import get_smart_preference
 from model.inference import predict_single
 from model.rl_learning import get_bandit
-from model.opencellid import get_towers, refresh_towers, load_real_towers
+from model.opencellid import get_towers, refresh_towers, load_real_towers, fetch_towers_for_path
 from model.schemas import (
     AutoRouteRequest, AutoRouteResponse,
     RecordTripRequest, RecordTripResponse,
@@ -82,40 +82,13 @@ async def _shutdown_tomtom():
 # Location lookup for Bangalore
 # -----------------------------------------------------------------------
 
-LOCATIONS: dict[str, tuple[float, float]] = {
-    "mit":               (12.9172, 77.6225),
-    "mit mahe":          (12.9172, 77.6225),
-    "silk board":        (12.9172, 77.6225),
-    "airport":           (13.1986, 77.7066),
-    "kempegowda airport":(13.1986, 77.7066),
-    "mg road":           (12.9716, 77.5946),
-    "majestic":          (12.9766, 77.5713),
-    "koramangala":       (12.9279, 77.6271),
-    "indiranagar":       (12.9784, 77.6408),
-    "jayanagar":         (12.9250, 77.5840),
-    "whitefield":        (12.9698, 77.7499),
-    "electronic city":   (12.8399, 77.6670),
-    "hsr layout":        (12.9116, 77.6389),
-    "btm layout":        (12.9166, 77.6101),
-    "marathahalli":      (12.9591, 77.6974),
-    "hebbal":            (13.0358, 77.5970),
-    "kr puram":          (12.9956, 77.6969),
-    "yelahanka":         (13.1007, 77.5963),
-    "bannerghatta":      (12.8010, 77.5775),
-    "sarjapur road":     (12.9100, 77.6800),
-    "rajajinagar":       (12.9910, 77.5550),
-    "peenya":            (13.0290, 77.5180),
-    "hosur road":        (12.8700, 77.6400),
-}
-
 
 def _resolve_location(name: str) -> tuple[float, float]:
     """Resolve a place name or @lat,lng string to (lat, lng) coordinates.
 
-    Supports three formats:
-    - ``"@lat,lng"`` -- geocoded coordinate pair from the frontend
-    - Known place name in LOCATIONS dict (e.g. ``"MG Road"``)
-    - Zone name substring match (fallback)
+    Supports two formats:
+    - ``"@lat,lng"`` -- geocoded coordinate pair from the frontend (preferred)
+    - Zone name substring match against ZONES from model config (fallback)
     """
     # Geocoded coordinate format passed from frontend: "@12.9172,77.6225"
     if name.startswith("@"):
@@ -125,12 +98,10 @@ def _resolve_location(name: str) -> tuple[float, float]:
         except (ValueError, IndexError):
             pass
     key = name.lower().strip()
-    if key in LOCATIONS:
-        return LOCATIONS[key]
     for zone_name, info in ZONES.items():
-        if key in zone_name.lower():
+        if key in zone_name.lower() or zone_name.lower() in key:
             return info["center"]
-    return (12.9172, 77.6225)  # default: MIT MAHE
+    return (12.9172, 77.6225)  # default: MIT MAHE Bangalore
 
 
 # -----------------------------------------------------------------------
@@ -153,6 +124,21 @@ def _invalidate_tower_cache():
     """Clear the tower cache so next request reloads from disk."""
     global _cached_towers
     _cached_towers = None
+
+
+def _merge_route_towers(route_dicts: list[dict]) -> pd.DataFrame:
+    """Merge per-route live tower DataFrames into one de-duplicated DataFrame.
+
+    Each route dict has a ``towers`` key set by ``_generate_routes``.
+    Falls back to the global cached towers if all routes have empty tower data.
+    """
+    frames = [r["towers"] for r in route_dicts if "towers" in r and r["towers"] is not None and not r["towers"].empty]
+    if not frames:
+        return _get_towers()
+    combined = pd.concat(frames, ignore_index=True)
+    if "tower_id" in combined.columns:
+        combined = combined.drop_duplicates(subset=["tower_id"])
+    return combined
 
 
 # -----------------------------------------------------------------------
@@ -251,44 +237,63 @@ _ROUTE_NAMES = ["Fastest Route", "Balanced Route", "Best Signal Route"]
 async def _generate_routes(
     src: tuple[float, float], dst: tuple[float, float],
 ) -> list[dict]:
-    """Fetch road-snapped routes from TomTom, fall back to synthetic."""
+    """Fetch road-snapped routes from TomTom, fall back to synthetic.
+
+    After building geometry, fetches real cell towers from OpenCelliD along
+    each route and attaches them as ``route["towers"]`` for the scoring model.
+    """
     if not _tomtom._api_key:
-        return _generate_routes_sync(src, dst)
+        routes = _generate_routes_sync(src, dst)
+    else:
+        try:
+            tt_routes = await _tomtom.get_routes(src, dst)
+        except Exception:
+            routes = _generate_routes_sync(src, dst)
+        else:
+            if not tt_routes or not tt_routes[0].get("geometry"):
+                routes = _generate_routes_sync(src, dst)
+            else:
+                total_dist = haversine(src[0], src[1], dst[0], dst[1])
+                routes = []
+                for i, tt in enumerate(tt_routes):
+                    path = tt["geometry"]
+                    dist_km = 0.0
+                    for j in range(len(path) - 1):
+                        dist_km += haversine(
+                            path[j]["lat"], path[j]["lng"],
+                            path[j + 1]["lat"], path[j + 1]["lng"],
+                        )
+                    dist_km = dist_km if dist_km > 0 else total_dist
+                    name = _ROUTE_NAMES[i] if i < len(_ROUTE_NAMES) else f"Route {i + 1}"
+                    zones = _zones_along_path(path)
+                    routes.append({
+                        "name": name,
+                        "eta": tt["eta"],
+                        "distance": round(dist_km, 1),
+                        "path": path,
+                        "zones": zones,
+                        "traffic_delay": tt.get("traffic_delay", 0),
+                    })
 
-    try:
-        tt_routes = await _tomtom.get_routes(src, dst)
-    except Exception:
-        return _generate_routes_sync(src, dst)
+    # Fetch real cell towers along each route from OpenCelliD (parallel via executor)
+    loop = asyncio.get_event_loop()
 
-    if not tt_routes or not tt_routes[0].get("geometry"):
-        return _generate_routes_sync(src, dst)
+    async def _fetch_for_route(path: list[dict]) -> pd.DataFrame:
+        return await loop.run_in_executor(
+            None,
+            lambda: fetch_towers_for_path(path, sample_every_n=30, max_towers=150, radius_km=0.8),
+        )
 
-    total_dist = haversine(src[0], src[1], dst[0], dst[1])
+    tower_tasks = [_fetch_for_route(r["path"]) for r in routes]
+    per_route_towers = await asyncio.gather(*tower_tasks)
 
-    routes = []
-    for i, tt in enumerate(tt_routes):
-        path = tt["geometry"]  # already [{"lat":..,"lng":..}] from TomTom client
-
-        # Compute distance from geometry (sum of segments)
-        dist_km = 0.0
-        for j in range(len(path) - 1):
-            dist_km += haversine(
-                path[j]["lat"], path[j]["lng"],
-                path[j + 1]["lat"], path[j + 1]["lng"],
-            )
-        dist_km = dist_km if dist_km > 0 else total_dist
-
-        name = _ROUTE_NAMES[i] if i < len(_ROUTE_NAMES) else f"Route {i + 1}"
-        zones = _zones_along_path(path)
-
-        routes.append({
-            "name": name,
-            "eta": tt["eta"],
-            "distance": round(dist_km, 1),
-            "path": path,
-            "zones": zones,
-            "traffic_delay": tt.get("traffic_delay", 0),
-        })
+    # Attach real towers; fall back to global cached data if API returned nothing
+    fallback_towers = _get_towers()
+    for route, rt in zip(routes, per_route_towers):
+        if rt is not None and not rt.empty:
+            route["towers"] = rt
+        else:
+            route["towers"] = fallback_towers
 
     return routes
 
@@ -319,8 +324,10 @@ async def api_routes(
     """
     src = _resolve_location(source)
     dst = _resolve_location(destination)
-    towers_df = _get_towers()
     route_dicts = await _generate_routes(src, dst)
+
+    # Merge per-route live towers into one de-duplicated DataFrame for scoring
+    towers_df = _merge_route_towers(route_dicts)
 
     # If max_eta_factor is 0 or negative, disable hard constraint
     effective_max = max_eta_factor if max_eta_factor > 0 else 999.0
@@ -498,9 +505,9 @@ async def api_reroute(body: _RerouteBody):
     """Reroute with bias toward better signal."""
     src = _resolve_location(body.source)
     dst = _resolve_location(body.destination)
-    towers_df = _get_towers()
 
     route_dicts = await _generate_routes(src, dst)
+    towers_df = _merge_route_towers(route_dicts)
     pref = max(body.preference, 70)  # bias toward signal on reroute
     ranked = rank_routes(
         route_dicts, towers_df,
@@ -846,8 +853,8 @@ async def api_offline_bundle(
     """
     src = _resolve_location(source)
     dst = _resolve_location(destination)
-    towers_df = _get_towers()
     route_dicts = await _generate_routes(src, dst)
+    towers_df = _merge_route_towers(route_dicts)
 
     ranked = rank_routes(
         route_dicts, towers_df,
