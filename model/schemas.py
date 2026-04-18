@@ -191,7 +191,7 @@ class HealthResponse(BaseModel):
 # ---------------------------------------------------------------------------
 
 class SmartRouteRequest(BaseModel):
-    user_id: str = "default"
+    user_id: str = Field("default", pattern=r"^[a-zA-Z0-9_\-]{1,64}$")
     intent: str = Field("balanced", description="User intent: meeting, call, navigation, fastest, download, streaming, emergency, work, idle, best_signal")
     routes: list[RouteInput]
     towers: list[TowerInput]
@@ -222,7 +222,7 @@ class SmartRouteResponse(BaseModel):
 # ---------------------------------------------------------------------------
 
 class RecordChoiceRequest(BaseModel):
-    user_id: str
+    user_id: str = Field("default", pattern=r"^[a-zA-Z0-9_\-]{1,64}$")
     intent: str
     preference_used: float
     time_hour: float = 12.0
@@ -242,7 +242,7 @@ class RecordChoiceResponse(BaseModel):
 # ---------------------------------------------------------------------------
 
 class ResolveIntentRequest(BaseModel):
-    user_id: str = "default"
+    user_id: str = Field("default", pattern=r"^[a-zA-Z0-9_\-]{1,64}$")
     intent: str
     time_hour: float = 12.0
 
@@ -262,7 +262,7 @@ class ResolveIntentResponse(BaseModel):
 # ---------------------------------------------------------------------------
 
 class AutoRouteRequest(BaseModel):
-    user_id: str = "default"
+    user_id: str = Field("default", pattern=r"^[a-zA-Z0-9_\-]{1,64}$")
     origin: Coordinate
     destination: Coordinate
     time_hour: float = Field(12.0, ge=0, lt=24)
@@ -306,7 +306,7 @@ class AutoRouteResponse(BaseModel):
 # ---------------------------------------------------------------------------
 
 class RecordTripRequest(BaseModel):
-    user_id: str
+    user_id: str = Field("default", pattern=r"^[a-zA-Z0-9_\-]{1,64}$")
     origin: Coordinate
     destination: Coordinate
     time_hour: float = Field(12.0, ge=0, lt=24)

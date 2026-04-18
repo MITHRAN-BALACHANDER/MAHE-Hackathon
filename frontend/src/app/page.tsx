@@ -13,7 +13,7 @@ import { useGeolocation } from "@/src/hooks/useGeolocation";
 import { useHeatmap, useReroute, useRoutes } from "@/src/hooks/useMapData";
 import { useNetworkDetect } from "@/src/hooks/useNetworkDetect";
 import { useTracking } from "@/src/hooks/useTracking";
-import { offlineService, geocodeService } from "@/src/services/api";
+import { offlineService, geocodeService, reverseGeocodeService } from "@/src/services/api";
 import type { TelecomMode } from "@/src/types/route";
 
 export default function Home() {
@@ -84,13 +84,13 @@ export default function Home() {
   useEffect(() => {
     if (geo.location && !source) {
       const { lat, lng } = geo.location;
-      geocodeService
-        .search(`${lat},${lng}`, 1)
-        .then((results) => {
-          if (results.length > 0) {
-            const short = results[0].city.split(",").slice(0, 2).join(",").trim();
+      reverseGeocodeService
+        .lookup(lat, lng)
+        .then((result) => {
+          if (result) {
+            const short = result.city.split(",").slice(0, 2).join(",").trim();
             setSource(short);
-            setSourceCoords({ lat: results[0].lat, lng: results[0].lon });
+            setSourceCoords({ lat: result.lat, lng: result.lon });
           }
         })
         .catch(() => {/* silently ignore */});

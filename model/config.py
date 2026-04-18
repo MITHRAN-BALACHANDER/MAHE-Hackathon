@@ -52,6 +52,11 @@ ZONES = {
     "Silk Board":       {"center": (12.9172, 77.6225), "radius_km": 0.8, "density": "medium", "terrain": "urban_main",  "building_height_m": 20},
     "Peenya":           {"center": (13.0290, 77.5180), "radius_km": 2.0, "density": "low",    "terrain": "suburban",    "building_height_m": 12},
     "Sarjapur Road":    {"center": (12.9100, 77.6800), "radius_km": 1.5, "density": "medium", "terrain": "suburban",    "building_height_m": 18},
+    "Devanahalli":      {"center": (13.2088, 77.7107), "radius_km": 3.0, "density": "low",    "terrain": "suburban",    "building_height_m": 8},
+    "Kempegowda Airport": {"center": (13.1979, 77.7063), "radius_km": 2.5, "density": "low",  "terrain": "suburban",    "building_height_m": 10},
+    "Bommanahalli":     {"center": (12.8952, 77.6340), "radius_km": 1.2, "density": "medium", "terrain": "residential", "building_height_m": 15},
+    "JP Nagar":         {"center": (12.9081, 77.5856), "radius_km": 1.5, "density": "high",   "terrain": "residential", "building_height_m": 18},
+    "Banashankari":     {"center": (12.9255, 77.5468), "radius_km": 1.5, "density": "high",   "terrain": "residential", "building_height_m": 16},
 }
 
 TERRAIN_CODE = {"highway": 0, "urban_main": 1, "suburban": 2, "residential": 3}
@@ -80,7 +85,7 @@ EDGE_TYPE_TO_TERRAIN = {"tunnel": 4, "underpass": 5, "urban_canyon": 6}
 # ---------------------------------------------------------------------------
 # Model hyperparameters -- ResidualSignalNet
 # ---------------------------------------------------------------------------
-INPUT_DIM = 17
+INPUT_DIM = 22
 HIDDEN_DIM = 256          # projection width
 RESIDUAL_BLOCKS = 4       # number of residual blocks
 BOTTLENECK_DIM = 64       # final bottleneck before heads

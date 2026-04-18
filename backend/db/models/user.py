@@ -12,9 +12,9 @@ class User(BaseModel):
     created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
 
 class UserCreate(BaseModel):
-    username: str
+    username: str = Field(..., min_length=3, max_length=64, pattern=r"^[a-zA-Z0-9_\-]+$")
     email: EmailStr
-    password: str
+    password: str = Field(..., min_length=8, max_length=128)
 
 class Token(BaseModel):
     access_token: str

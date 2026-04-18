@@ -19,9 +19,9 @@ router = APIRouter()
 @router.post("/register", response_model=Token)
 async def register(user: UserCreate, db: AsyncIOMotorDatabase = Depends(get_db)):
     if await db.users.find_one({"username": user.username}):
-        raise HTTPException(status_code=400, detail="Username already registered")
+        raise HTTPException(status_code=400, detail="Registration failed")
     if await db.users.find_one({"email": user.email}):
-        raise HTTPException(status_code=400, detail="Email already registered")
+        raise HTTPException(status_code=400, detail="Registration failed")
         
     hashed_password = get_password_hash(user.password)
     user_id = str(uuid.uuid4())

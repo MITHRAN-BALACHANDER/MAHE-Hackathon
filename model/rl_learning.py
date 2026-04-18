@@ -83,9 +83,16 @@ class ContextualBandit:
     MIN_OBS = 3
     MIN_CONFIDENCE = 0.55
 
+    _SAFE_ID = __import__("re").compile(r"^[a-zA-Z0-9_\-]{1,64}$")
+
     def __init__(self, user_id: str):
+        if not self._SAFE_ID.match(user_id):
+            raise ValueError(f"Invalid user_id: {user_id!r}")
         self.user_id = user_id
-        self.data_path = RL_DATA_DIR / f"{user_id}.json"
+        self.data_path = (RL_DATA_DIR / f"{user_id}.json").resolve()
+        # Ensure resolved path is inside RL_DATA_DIR
+        if not str(self.data_path).startswith(str(RL_DATA_DIR.resolve())):
+            raise ValueError(f"Invalid user_id path: {user_id!r}")
         self.distributions: dict[str, dict[str, list[float]]] = {}
         self.trip_count: int = 0
         self._load()

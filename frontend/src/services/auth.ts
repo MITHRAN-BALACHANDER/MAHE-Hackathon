@@ -1,4 +1,4 @@
-const rawApiUrl = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
+const rawApiUrl = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8001";
 
 function normalizeAuthApiBase(url: string): string {
   const base = url.trim().replace(/\/+$/, "");

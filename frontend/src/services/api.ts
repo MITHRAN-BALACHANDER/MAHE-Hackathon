@@ -11,7 +11,7 @@ import type {
   TowerSummary,
 } from "@/src/types/route";
 
-const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000";
+const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8001";
 
 const client = axios.create({
   baseURL: API_BASE_URL,
@@ -108,6 +108,19 @@ export const geocodeService = {
       return data;
     } catch {
       return [];
+    }
+  },
+};
+
+export const reverseGeocodeService = {
+  async lookup(lat: number, lon: number): Promise<GeocodeSuggestion | null> {
+    try {
+      const { data } = await client.get<GeocodeSuggestion>("/api/reverse-geocode", {
+        params: { lat, lon },
+      });
+      return data;
+    } catch {
+      return null;
     }
   },
 };

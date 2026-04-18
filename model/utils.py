@@ -104,8 +104,9 @@ def extract_features(
     time_hour: float = 12.0,
     weather_factor: float = 1.0,
     speed_kmh: float = 40.0,
+    traffic_factor: float = 0.0,
 ) -> np.ndarray:
-    """Extract a 17-dim feature vector for a single geographic point.
+    """Extract a 22-dim feature vector for a single geographic point.
 
     Features
     --------
@@ -126,8 +127,14 @@ def extract_features(
     14 speed_norm         (speed / 120)
     15 nearest_signal     (nearest tower signal / 100)
     16 load_factor        (congestion proxy)
+    -- real-time features --
+    17 radio_generation   (nearest tower radio tech: GSM=0.2, UMTS=0.4, LTE=0.6, NR=0.8)
+    18 nearest_range_norm (nearest tower coverage range / 50000)
+    19 nearest_samples_norm (log(1+samples)/log(1001) of nearest tower)
+    20 tower_tech_diversity (unique radio types within 2km / 5)
+    21 traffic_factor     (route-level traffic congestion, 0=free, 1=heavy)
     """
-    feats = np.zeros(17, dtype=np.float32)
+    feats = np.zeros(22, dtype=np.float32)
 
     t_lats = towers_df["lat"].values.astype(float)
     t_lngs = towers_df["lng"].values.astype(float)
@@ -170,6 +177,42 @@ def extract_features(
     feats[15] = sig_scores[order[0]] / 100.0
     feats[16] = tower_load_factor(time_hour)
 
+    # --- Real-time features (17-21) ---
+    # f17: radio generation of nearest tower
+    radio_gen_map = {"GSM": 0.2, "UMTS": 0.4, "LTE": 0.6, "NR": 0.8, "NBIOT": 0.3}
+    radios = towers_df["radio"].values if "radio" in towers_df.columns else None
+    if radios is not None:
+        feats[17] = radio_gen_map.get(str(radios[order[0]]), 0.5)
+    else:
+        # Infer from frequency if radio column missing
+        nearest_freq = freqs[order[0]]
+        if nearest_freq <= 900:
+            feats[17] = 0.2  # GSM
+        elif nearest_freq <= 2100:
+            feats[17] = 0.4  # UMTS
+        elif nearest_freq <= 2300:
+            feats[17] = 0.6  # LTE
+        else:
+            feats[17] = 0.8  # NR
+
+    # f18: nearest tower coverage range (normalised)
+    ranges = _safe_col(towers_df, "range_m", 2000.0)
+    feats[18] = min(ranges[order[0]] / 50000.0, 1.0)
+
+    # f19: nearest tower sample count (log-normalised data quality)
+    samples = _safe_col(towers_df, "samples", 10.0)
+    feats[19] = min(np.log1p(samples[order[0]]) / np.log1p(1000.0), 1.0)
+
+    # f20: tower technology diversity within 2km (unique radio types / 5)
+    if radios is not None:
+        mask_2km = dists < 2.0
+        if np.any(mask_2km):
+            unique_radios = len(set(str(r) for r in radios[mask_2km]))
+            feats[20] = min(unique_radios / 5.0, 1.0)
+
+    # f21: traffic congestion factor (from TomTom route data)
+    feats[21] = float(np.clip(traffic_factor, 0.0, 1.0))
+
     return feats
 
 
@@ -180,10 +223,11 @@ def extract_features_batch(
     time_hour: float = 12.0,
     weather_factor: float = 1.0,
     speed_kmh: float = 40.0,
+    traffic_factor: float = 0.0,
 ) -> np.ndarray:
-    """Batch version -- returns (N, 17) array."""
+    """Batch version -- returns (N, 22) array."""
     return np.stack([
-        extract_features(float(la), float(lo), towers_df, time_hour, weather_factor, speed_kmh)
+        extract_features(float(la), float(lo), towers_df, time_hour, weather_factor, speed_kmh, traffic_factor)
         for la, lo in zip(lats, lngs)
     ])
 

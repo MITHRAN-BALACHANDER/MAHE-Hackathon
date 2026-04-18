@@ -51,7 +51,12 @@ from model.schemas import (
     RLInfo, PatternInfo,
 )
 from backend.routing.tomtom_client import TomTomClient
-from backend.routing.geocode import geocode_query
+from backend.routing.geocode import geocode_query, reverse_geocode_query
+from backend.db.base import MongoClient
+
+# Mount the auth router so /api/v1/login and /api/v1/register work
+from backend.api.routes import router as _auth_router
+app.include_router(_auth_router, prefix="/api/v1", tags=["auth"])
 
 # Update app metadata for the full backend
 app.title = "SignalRoute Backend"
@@ -71,37 +76,54 @@ _tomtom = TomTomClient(
 @app.on_event("startup")
 async def _startup_tomtom():
     await _tomtom.startup()
+    try:
+        await MongoClient.connect()
+    except Exception:
+        pass  # MongoDB is optional; auth won't work without it
 
 
 @app.on_event("shutdown")
 async def _shutdown_tomtom():
     await _tomtom.shutdown()
+    await MongoClient.disconnect()
 
 
 # -----------------------------------------------------------------------
 # Location lookup for Bangalore
 # -----------------------------------------------------------------------
 
-
-def _resolve_location(name: str) -> tuple[float, float]:
+async def _resolve_location(name: str) -> tuple[float, float]:
     """Resolve a place name or @lat,lng string to (lat, lng) coordinates.
 
-    Supports two formats:
-    - ``"@lat,lng"`` -- geocoded coordinate pair from the frontend (preferred)
-    - Zone name substring match against ZONES from model config (fallback)
+    Lookup order:
+    1. ``"@lat,lng"`` -- geocoded coordinate pair already supplied by the frontend
+    2. Nominatim geocoding via the existing geocode service (dynamic, cached)
+    3. ZONES substring match (instant fallback if geocoding fails/times out)
+    4. Default: MG Road (Bangalore city centre)
     """
-    # Geocoded coordinate format passed from frontend: "@12.9172,77.6225"
+    # Coordinate pair already resolved by the frontend SearchBar
     if name.startswith("@"):
         try:
             lat_s, lng_s = name[1:].split(",", 1)
             return (float(lat_s), float(lng_s))
         except (ValueError, IndexError):
             pass
+
+    # Dynamic geocoding via Nominatim (result is in-memory cached)
+    try:
+        results = await geocode_query(name.strip(), limit=1)
+        if results:
+            return (results[0]["lat"], results[0]["lon"])
+    except Exception:
+        pass  # fall through to static fallbacks
+
+    # Static fallback: ZONES substring match (no network required)
     key = name.lower().strip()
     for zone_name, info in ZONES.items():
         if key in zone_name.lower() or zone_name.lower() in key:
             return info["center"]
-    return (12.9172, 77.6225)  # default: MIT MAHE Bangalore
+
+    return ZONES["MG Road"]["center"]  # default fallback
 
 
 # -----------------------------------------------------------------------
@@ -129,13 +151,34 @@ def _invalidate_tower_cache():
 def _merge_route_towers(route_dicts: list[dict]) -> pd.DataFrame:
     """Merge per-route live tower DataFrames into one de-duplicated DataFrame.
 
-    Each route dict has a ``towers`` key set by ``_generate_routes``.
-    Falls back to the global cached towers if all routes have empty tower data.
+    Always blends in the synthetic/global tower base so the model sees the
+    dense calibrated distribution it was trained on. Real per-route towers
+    are appended for additional real-world radio/tech feature diversity.
     """
-    frames = [r["towers"] for r in route_dicts if "towers" in r and r["towers"] is not None and not r["towers"].empty]
-    if not frames:
-        return _get_towers()
-    combined = pd.concat(frames, ignore_index=True)
+    base = _get_towers()  # always include synthetic base
+
+    live_frames = [
+        r["towers"] for r in route_dicts
+        if "towers" in r and r["towers"] is not None and not r["towers"].empty
+    ]
+
+    if not live_frames:
+        return base
+
+    # Only append live towers with precise coordinates (>2 decimal places)
+    # to avoid replacing calibrated synthetic with coarse OpenCelliD grid data
+    precise_frames = []
+    for df in live_frames:
+        if df.empty:
+            continue
+        precise = df[(df["lat"].round(2) != df["lat"]) | (df["lng"].round(2) != df["lng"])]
+        if not precise.empty:
+            precise_frames.append(precise)
+
+    if not precise_frames:
+        return base
+
+    combined = pd.concat([base] + precise_frames, ignore_index=True)
     if "tower_id" in combined.columns:
         combined = combined.drop_duplicates(subset=["tower_id"])
     return combined
@@ -308,11 +351,11 @@ async def _generate_routes(
 
 @app.get("/api/routes")
 async def api_routes(
-    source: str = Query("MIT"),
-    destination: str = Query("Airport"),
-    preference: float = Query(50),
-    telecom: str = Query("all"),
-    max_eta_factor: float = Query(1.5),
+    source: str = Query("MIT", max_length=200),
+    destination: str = Query("Airport", max_length=200),
+    preference: float = Query(50, ge=0, le=100),
+    telecom: str = Query("all", max_length=20),
+    max_eta_factor: float = Query(1.5, ge=0, le=10),
 ):
     """Score routes between two named locations.
 
@@ -322,8 +365,7 @@ async def api_routes(
                      Default 1.5 (50% slower than fastest). Set 0 to disable.
     telecom : "all", "jio", "airtel", "vi", or "multi" for multi-SIM optimization.
     """
-    src = _resolve_location(source)
-    dst = _resolve_location(destination)
+    src, dst = await asyncio.gather(_resolve_location(source), _resolve_location(destination))
     route_dicts = await _generate_routes(src, dst)
 
     # Merge per-route live towers into one de-duplicated DataFrame for scoring
@@ -444,8 +486,8 @@ def api_heatmap():
 
 @app.get("/api/predict")
 def api_predict(
-    zone: str = Query("Electronic City"),
-    minutes: int = Query(15),
+    zone: str = Query(..., max_length=100, description="Zone name to predict signal for"),
+    minutes: int = Query(15, ge=1, le=120),
 ):
     """Short-horizon signal prediction for a zone."""
     zone_info = None
@@ -503,9 +545,7 @@ class _RerouteBody(BaseModel):
 @app.post("/api/reroute")
 async def api_reroute(body: _RerouteBody):
     """Reroute with bias toward better signal."""
-    src = _resolve_location(body.source)
-    dst = _resolve_location(body.destination)
-
+    src, dst = await asyncio.gather(_resolve_location(body.source), _resolve_location(body.destination))
     route_dicts = await _generate_routes(src, dst)
     towers_df = _merge_route_towers(route_dicts)
     pref = max(body.preference, 70)  # bias toward signal on reroute
@@ -565,10 +605,31 @@ async def api_geocode(
 
     results = await geocode_query(q.strip(), limit=limit)
 
-    if not results:
-        raise HTTPException(status_code=404, detail=f"No results found for '{q}'")
-
+    # Return empty list (200) when Nominatim finds nothing — avoids red 404 in browser
     return results
+
+
+# -----------------------------------------------------------------------
+# GET /api/reverse-geocode  (lat,lon -> place name via Nominatim /reverse)
+# -----------------------------------------------------------------------
+
+@app.get("/api/reverse-geocode")
+async def api_reverse_geocode(
+    lat: float = Query(..., ge=-90, le=90, description="Latitude"),
+    lon: float = Query(..., ge=-180, le=180, description="Longitude"),
+):
+    """Convert GPS coordinates to a human-readable place name.
+
+    Uses Nominatim ``/reverse`` which is designed for coordinate lookup.
+    Returns a single result with ``city``, ``lat``, and ``lon`` fields.
+    """
+    result = await reverse_geocode_query(lat, lon)
+    if result is None:
+        raise HTTPException(
+            status_code=404,
+            detail=f"No place found for coordinates ({lat}, {lon})",
+        )
+    return result
 
 
 # -----------------------------------------------------------------------
@@ -851,8 +912,7 @@ async def api_offline_bundle(
     Returns full route data, bad zone predictions, heatmap, and signal
     predictions that can be cached client-side for use without connectivity.
     """
-    src = _resolve_location(source)
-    dst = _resolve_location(destination)
+    src, dst = await asyncio.gather(_resolve_location(source), _resolve_location(destination))
     route_dicts = await _generate_routes(src, dst)
     towers_df = _merge_route_towers(route_dicts)
 
@@ -909,9 +969,19 @@ async def api_offline_bundle(
             score = result["signal_strength"]
         except Exception:
             score = 50.0
+
+        if score >= 70:
+            strength, color = "strong", "#22c55e"
+        elif score >= 40:
+            strength, color = "moderate", "#eab308"
+        else:
+            strength, color = "weak", "#ef4444"
+
         heatmap.append({
             "name": name, "lat": lat, "lng": lng,
             "score": round(score, 1),
+            "signal_strength": strength,
+            "color": color,
         })
 
     import time as _time
@@ -931,4 +1001,4 @@ async def api_offline_bundle(
 
 if __name__ == "__main__":
     import uvicorn
-    uvicorn.run(app, host="0.0.0.0", port=8000)
+    uvicorn.run(app, host="0.0.0.0", port=int(os.getenv("PORT", "8001")))

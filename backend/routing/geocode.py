@@ -6,6 +6,9 @@ repeated calls to the Nominatim rate-limited API.
 """
 from __future__ import annotations
 
+import asyncio
+import os
+from collections import OrderedDict
 from typing import TypedDict
 
 import httpx
@@ -13,13 +16,27 @@ import httpx
 from backend.core.logging import logger
 
 # ---------------------------------------------------------------------------
-# In-memory cache: cache_key -> list of results
+# LRU cache with max size + Nominatim rate limiter (1 req/sec)
 # ---------------------------------------------------------------------------
-_CACHE: dict[str, list["GeoResult"]] = {}
+_MAX_CACHE_SIZE = 1000
+_CACHE: OrderedDict[str, list["GeoResult"]] = OrderedDict()
+_NOMINATIM_SEMAPHORE = asyncio.Semaphore(1)  # serialize Nominatim calls
 
-_NOMINATIM_URL = "https://nominatim.openstreetmap.org/search"
+_NOMINATIM_URL = os.environ.get("NOMINATIM_URL", "https://nominatim.openstreetmap.org/search")
+_NOMINATIM_REVERSE_URL = os.environ.get(
+    "NOMINATIM_REVERSE_URL", "https://nominatim.openstreetmap.org/reverse"
+)
 _USER_AGENT = "SignalRoute/1.0 (hackathon; github.com/MAHE-Hackathon)"
 _TIMEOUT_S = 5.0
+
+
+def _cache_put(key: str, value: list["GeoResult"]) -> None:
+    """Insert into bounded LRU cache, evicting oldest if full."""
+    if key in _CACHE:
+        _CACHE.move_to_end(key)
+    _CACHE[key] = value
+    while len(_CACHE) > _MAX_CACHE_SIZE:
+        _CACHE.popitem(last=False)
 
 
 class GeoResult(TypedDict):
@@ -48,34 +65,37 @@ async def geocode_query(
     """
     cache_key = f"{query.lower().strip()}:{limit}:{countrycodes}"
     if cache_key in _CACHE:
+        _CACHE.move_to_end(cache_key)  # refresh LRU position
         return _CACHE[cache_key]
 
-    try:
-        async with httpx.AsyncClient(timeout=_TIMEOUT_S) as client:
-            resp = await client.get(
-                _NOMINATIM_URL,
-                params={
-                    "q": query,
-                    "format": "json",
-                    "limit": limit,
-                    "addressdetails": 0,
-                    "countrycodes": countrycodes,
-                },
-                headers={"User-Agent": _USER_AGENT},
+    # Serialize Nominatim calls to respect 1 req/sec rate limit
+    async with _NOMINATIM_SEMAPHORE:
+        try:
+            async with httpx.AsyncClient(timeout=_TIMEOUT_S) as client:
+                resp = await client.get(
+                    _NOMINATIM_URL,
+                    params={
+                        "q": query,
+                        "format": "json",
+                        "limit": limit,
+                        "addressdetails": 0,
+                        "countrycodes": countrycodes,
+                    },
+                    headers={"User-Agent": _USER_AGENT},
+                )
+                resp.raise_for_status()
+                data: list[dict] = resp.json()
+        except httpx.TimeoutException:
+            logger.warning("Nominatim geocode timeout for query: %r", query)
+            return []
+        except httpx.HTTPStatusError as exc:
+            logger.warning(
+                "Nominatim HTTP %s for query: %r", exc.response.status_code, query
             )
-            resp.raise_for_status()
-            data: list[dict] = resp.json()
-    except httpx.TimeoutException:
-        logger.warning("Nominatim geocode timeout for query: %r", query)
-        return []
-    except httpx.HTTPStatusError as exc:
-        logger.warning(
-            "Nominatim HTTP %s for query: %r", exc.response.status_code, query
-        )
-        return []
-    except Exception:
-        logger.exception("Unexpected geocode error for query: %r", query)
-        return []
+            return []
+        except Exception:
+            logger.exception("Unexpected geocode error for query: %r", query)
+            return []
 
     results: list[GeoResult] = [
         GeoResult(
@@ -85,5 +105,68 @@ async def geocode_query(
         )
         for item in data
     ]
-    _CACHE[cache_key] = results
+    _cache_put(cache_key, results)
     return results
+
+
+async def reverse_geocode_query(lat: float, lon: float) -> GeoResult | None:
+    """Reverse geocode a lat/lon pair to a human-readable place name.
+
+    Uses Nominatim's ``/reverse`` endpoint which is designed for coordinate
+    lookup (unlike ``/search`` which expects text queries).
+
+    Parameters
+    ----------
+    lat : latitude in decimal degrees
+    lon : longitude in decimal degrees
+
+    Returns
+    -------
+    A :class:`GeoResult` dict, or ``None`` on failure.
+    """
+    cache_key = f"rev:{round(lat, 5)}:{round(lon, 5)}"
+    if cache_key in _CACHE:
+        _CACHE.move_to_end(cache_key)
+        cached = _CACHE[cache_key]
+        return cached[0] if cached else None
+
+    async with _NOMINATIM_SEMAPHORE:
+        try:
+            async with httpx.AsyncClient(timeout=_TIMEOUT_S) as client:
+                resp = await client.get(
+                    _NOMINATIM_REVERSE_URL,
+                    params={
+                        "lat": lat,
+                        "lon": lon,
+                        "format": "json",
+                        "zoom": 16,          # neighbourhood level
+                        "addressdetails": 0,
+                    },
+                    headers={"User-Agent": _USER_AGENT},
+                )
+                resp.raise_for_status()
+                data: dict = resp.json()
+        except httpx.TimeoutException:
+            logger.warning("Nominatim reverse timeout for (%s, %s)", lat, lon)
+            return None
+        except httpx.HTTPStatusError as exc:
+            logger.warning(
+                "Nominatim reverse HTTP %s for (%s, %s)",
+                exc.response.status_code, lat, lon,
+            )
+            return None
+        except Exception:
+            logger.exception("Unexpected reverse geocode error for (%s, %s)", lat, lon)
+            return None
+
+    if "error" in data or "display_name" not in data:
+        _cache_put(cache_key, [])
+        return None
+
+    result = GeoResult(
+        city=data["display_name"],
+        lat=float(data["lat"]),
+        lon=float(data["lon"]),
+    )
+    _cache_put(cache_key, [result])
+    return result

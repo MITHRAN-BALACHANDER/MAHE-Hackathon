@@ -1,10 +1,14 @@
+import os
 import re
 from datetime import datetime, timedelta, timezone
 import jwt
 from passlib.context import CryptContext
 from fastapi import HTTPException, status
 
-SECRET_KEY = "dummy-secret-key-for-now-replace-in-env"
+SECRET_KEY = os.environ.get("SECRET_KEY", "")
+if not SECRET_KEY:
+    import secrets
+    SECRET_KEY = secrets.token_urlsafe(32)
 ALGORITHM = "HS256"
 ACCESS_TOKEN_EXPIRE_MINUTES = 30
 

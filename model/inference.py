@@ -28,10 +28,14 @@ def _load_model():
     _model = SignalNet(input_dim=INPUT_DIM).to(_device)
 
     if WEIGHTS_PATH.exists():
-        ckpt = torch.load(WEIGHTS_PATH, map_location=_device, weights_only=True)
-        _model.load_state_dict(ckpt["model_state_dict"])
-        _model.eval()
-        print(f"[inference] Loaded model from {WEIGHTS_PATH} on {_device}")
+        try:
+            ckpt = torch.load(WEIGHTS_PATH, map_location=_device, weights_only=True)
+            _model.load_state_dict(ckpt["model_state_dict"])
+            _model.eval()
+            print(f"[inference] Loaded model from {WEIGHTS_PATH} on {_device}")
+        except RuntimeError as e:
+            _model.eval()
+            print(f"[inference] WARNING: Weights incompatible (likely INPUT_DIM changed) -- using random init. Re-train to fix. Error: {e}")
     else:
         _model.eval()
         print(f"[inference] WARNING: No weights at {WEIGHTS_PATH} -- using random init")

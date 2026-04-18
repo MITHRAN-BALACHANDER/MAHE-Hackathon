@@ -36,6 +36,7 @@ def score_route(
     time_hour: float = 12.0,
     weather_factor: float = 1.0,
     speed_kmh: float = 40.0,
+    traffic_factor: float = 0.0,
 ) -> dict:
     """Score a single route's connectivity using the trained model.
 
@@ -45,6 +46,7 @@ def score_route(
     towers : list[dict] | DataFrame  -- tower data
     telecom : carrier filter ("all", "Jio", "Airtel", "Vi", "BSNL")
     time_hour, weather_factor, speed_kmh : environment conditions
+    traffic_factor : 0 = free-flow, 1 = heavy congestion (from TomTom traffic_delay)
 
     Returns
     -------
@@ -59,7 +61,7 @@ def score_route(
 
     # Extract features for every path point
     feats = np.stack([
-        extract_features(p["lat"], p["lng"], df, time_hour, weather_factor, speed_kmh)
+        extract_features(p["lat"], p["lng"], df, time_hour, weather_factor, speed_kmh, traffic_factor)
         for p in path
     ])
 
@@ -145,6 +147,7 @@ def score_route_multi_sim(
     time_hour: float = 12.0,
     weather_factor: float = 1.0,
     speed_kmh: float = 40.0,
+    traffic_factor: float = 0.0,
 ) -> dict:
     """Score a route across ALL carriers and pick best per segment.
 
@@ -167,7 +170,7 @@ def score_route_multi_sim(
         result = score_route(
             path, towers, telecom=op,
             time_hour=time_hour, weather_factor=weather_factor,
-            speed_kmh=speed_kmh,
+            speed_kmh=speed_kmh, traffic_factor=traffic_factor,
         )
         per_carrier[op] = {
             "avg_connectivity": result["avg_connectivity"],
@@ -243,14 +246,20 @@ def rank_routes(
     conn_results = []
     multi_sim_results = []
     for route in routes:
+        # Compute traffic_factor from TomTom traffic_delay (0 = free, 1 = heavy)
+        traffic_delay = route.get("traffic_delay", 0)
+        traffic_factor = min(traffic_delay / 20.0, 1.0) if traffic_delay else 0.0
+
         conn = score_route(
             route["path"], towers, telecom, time_hour, weather_factor, speed_kmh,
+            traffic_factor=traffic_factor,
         )
         conn_results.append(conn)
 
         if include_multi_sim or telecom.lower() == "multi":
             msim = score_route_multi_sim(
                 route["path"], towers, time_hour, weather_factor, speed_kmh,
+                traffic_factor=traffic_factor,
             )
             multi_sim_results.append(msim)
         else:

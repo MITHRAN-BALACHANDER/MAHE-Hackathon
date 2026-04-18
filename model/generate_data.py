@@ -17,7 +17,7 @@ from model.config import (
     DATA_DIR, ZONES, EDGE_ZONES, OPERATORS, FREQUENCY_BANDS_MHZ,
     LAT_RANGE, LNG_RANGE, SEED, EDGE_TYPE_TO_TERRAIN,
     MOBILE_HEIGHT_M, N_TOWERS, N_SAMPLES, SAMPLE_SPLIT,
-    TERRAIN_TO_ENV,
+    TERRAIN_TO_ENV, INPUT_DIM,
 )
 from model.utils import haversine_vec, haversine, detect_edge_zone, tower_load_factor
 from model.propagation import (
@@ -28,6 +28,20 @@ from model.propagation import (
 # ---------------------------------------------------------------------------
 # Tower generation
 # ---------------------------------------------------------------------------
+
+# Frequency -> radio technology mapping for synthetic towers
+_FREQ_TO_RADIO = {
+    700: "LTE", 850: "GSM", 900: "GSM", 1800: "LTE",
+    2100: "UMTS", 2300: "LTE", 3500: "NR",
+}
+
+# Density -> typical range_m and sample count ranges
+_DENSITY_RANGES = {
+    "high":   (300, 1500, 50, 500),    # (range_min, range_max, samp_min, samp_max)
+    "medium": (800, 4000, 10, 200),
+    "low":    (1500, 10000, 2, 50),
+}
+
 
 def generate_towers(seed: int = SEED) -> pd.DataFrame:
     """Place ~500 towers across Bangalore with realistic properties.
@@ -69,6 +83,13 @@ def generate_towers(seed: int = SEED) -> pd.DataFrame:
                 base_sig = {"high": 85, "medium": 65, "low": 50}[info["density"]]
                 sig = float(np.clip(base_sig + rng.uniform(-12, 12), 20, 100))
 
+                radio = _FREQ_TO_RADIO.get(freq, "LTE")
+                rng_min, rng_max, smp_min, smp_max = _DENSITY_RANGES[info["density"]]
+                range_m = int(rng.uniform(rng_min, rng_max))
+                samples_count = int(rng.uniform(smp_min, smp_max))
+                # Convert signal_score back to approximate dBm for avg_signal_dbm
+                avg_dbm = int(-140 + sig / 100.0 * 96) if radio in ("LTE", "NR") else int(-110 + sig / 100.0 * 60)
+
                 towers.append({
                     "tower_id": f"TWR_{tid:04d}",
                     "lat": round(lat, 6),
@@ -79,22 +100,34 @@ def generate_towers(seed: int = SEED) -> pd.DataFrame:
                     "tx_power_dbm": round(tx_power, 1),
                     "height_m": round(height, 1),
                     "zone": zone_name,
+                    "radio": radio,
+                    "range_m": range_m,
+                    "samples": samples_count,
+                    "avg_signal_dbm": avg_dbm,
                 })
                 tid += 1
 
     # Sparse random towers in inter-zone gaps
     n_sparse = max(50, N_TOWERS - tid)
     for _ in range(n_sparse):
+        freq = int(rng.choice(FREQUENCY_BANDS_MHZ))
+        sig_val = round(float(rng.uniform(35, 75)), 1)
+        radio = _FREQ_TO_RADIO.get(freq, "LTE")
+        avg_dbm = int(-140 + sig_val / 100.0 * 96) if radio in ("LTE", "NR") else int(-110 + sig_val / 100.0 * 60)
         towers.append({
             "tower_id": f"TWR_{tid:04d}",
             "lat": round(float(rng.uniform(*LAT_RANGE)), 6),
             "lng": round(float(rng.uniform(*LNG_RANGE)), 6),
             "operator": str(rng.choice(OPERATORS)),
-            "signal_score": round(float(rng.uniform(35, 75)), 1),
-            "frequency_mhz": int(rng.choice(FREQUENCY_BANDS_MHZ)),
+            "signal_score": sig_val,
+            "frequency_mhz": freq,
             "tx_power_dbm": round(float(rng.uniform(40, 46)), 1),
             "height_m": round(float(rng.uniform(25, 50)), 1),
             "zone": "Outer",
+            "radio": radio,
+            "range_m": int(rng.uniform(2000, 15000)),
+            "samples": int(rng.uniform(1, 30)),
+            "avg_signal_dbm": avg_dbm,
         })
         tid += 1
 
@@ -102,22 +135,65 @@ def generate_towers(seed: int = SEED) -> pd.DataFrame:
 
 
 # ---------------------------------------------------------------------------
-# Simulated road corridors for along-road sampling
+# Dynamic road corridors derived from ZONES configuration
 # ---------------------------------------------------------------------------
 
-ROAD_CORRIDORS = [
-    # (start_lat, start_lng, end_lat, end_lng, name)
-    (12.9172, 77.6225, 13.0827, 77.6774, "Silk Board - Airport"),
-    (12.9279, 77.6271, 12.9698, 77.7499, "Koramangala - Whitefield"),
-    (12.9716, 77.5946, 13.0358, 77.5970, "MG Road - Hebbal"),
-    (12.8399, 77.6670, 12.9591, 77.6974, "Electronic City - Marathahalli"),
-    (12.9250, 77.5840, 12.9784, 77.6408, "Jayanagar - Indiranagar"),
-    (12.9910, 77.5550, 13.0500, 77.5500, "Rajajinagar - Tumkur Road"),
-    (13.0600, 77.5800, 13.1007, 77.5963, "Bellary Road - Yelahanka"),
-    (12.8700, 77.6400, 12.8010, 77.5775, "Hosur Road - Bannerghatta"),
-    (12.9166, 77.6101, 12.9100, 77.6800, "BTM - Sarjapur"),
-    (13.0290, 77.5180, 13.0220, 77.5510, "Peenya - Yeshwanthpur"),
-]
+def _build_road_corridors(
+    min_dist_km: float = 3.0,
+    max_dist_km: float = 25.0,
+    max_corridors: int = 15,
+) -> list[tuple[float, float, float, float, str]]:
+    """Build road corridor pairs dynamically from ZONES center coordinates.
+
+    Pairs zone centers that are between *min_dist_km* and *max_dist_km* apart,
+    then picks a diverse subset that spans Bangalore's major axes.
+
+    Returns
+    -------
+    List of (start_lat, start_lng, end_lat, end_lng, name) tuples, same
+    format as the old ROAD_CORRIDORS constant.
+    """
+    zone_list = [(name, info["center"], info["density"]) for name, info in ZONES.items()]
+
+    # Collect all qualifying pairs with their distance
+    candidates: list[tuple[float, float, float, float, str, float]] = []
+    for i, (n1, (lat1, lng1), d1) in enumerate(zone_list):
+        for n2, (lat2, lng2), d2 in zone_list[i + 1:]:
+            dist = haversine(lat1, lng1, lat2, lng2)
+            if min_dist_km <= dist <= max_dist_km:
+                # Prefer pairs where at least one end is high-density
+                priority = 0 if "high" in (d1, d2) else (1 if "medium" in (d1, d2) else 2)
+                candidates.append((lat1, lng1, lat2, lng2, f"{n1} - {n2}", dist, priority))
+
+    # Sort: high-density pairs first, then by distance (shorter first)
+    candidates.sort(key=lambda c: (c[6], c[5]))
+
+    # Greedy diversity selection: avoid using the same zone more than twice
+    zone_usage: dict[str, int] = {}
+    corridors: list[tuple[float, float, float, float, str]] = []
+    for lat1, lng1, lat2, lng2, name, dist, _ in candidates:
+        z1, z2 = name.split(" - ", 1)
+        if zone_usage.get(z1, 0) >= 2 or zone_usage.get(z2, 0) >= 2:
+            continue
+        zone_usage[z1] = zone_usage.get(z1, 0) + 1
+        zone_usage[z2] = zone_usage.get(z2, 0) + 1
+        corridors.append((lat1, lng1, lat2, lng2, name))
+        if len(corridors) >= max_corridors:
+            break
+
+    # Safety: always return at least a minimal set using first few zones
+    if len(corridors) < 3:
+        for i in range(min(3, len(zone_list) - 1)):
+            n1, (lat1, lng1), _ = zone_list[i]
+            n2, (lat2, lng2), _ = zone_list[i + 1]
+            corridors.append((lat1, lng1, lat2, lng2, f"{n1} - {n2}"))
+
+    return corridors
+
+
+# Build once at module load time (uses only already-loaded ZONES dict, no I/O)
+ROAD_CORRIDORS = _build_road_corridors()
+
 
 
 # ---------------------------------------------------------------------------
@@ -240,7 +316,8 @@ def generate_samples(towers_df: pd.DataFrame, n_samples: int = N_SAMPLES, seed: 
         t_h = float(rng.uniform(0, 24))
         w_f = float(rng.choice([1.0, 1.0, 1.0, 0.9, 0.8, 0.7, 0.55]))
         spd = float(rng.uniform(5, 120))
-        feats = extract_features(lat, lng, towers_df, t_h, w_f, spd)
+        traf = float(rng.choice([0.0, 0.0, 0.0, 0.1, 0.3, 0.5, 0.7, 1.0]))
+        feats = extract_features(lat, lng, towers_df, t_h, w_f, spd, traf)
         sig, drop, ho = compute_ground_truth(lat, lng, towers_df, rng, t_h, w_f, spd)
         return (*feats, sig / 100.0, drop, ho)
 
@@ -279,7 +356,7 @@ def generate_samples(towers_df: pd.DataFrame, n_samples: int = N_SAMPLES, seed: 
         lng = zinfo["center"][1] + rng.normal(0, zinfo["radius_km"] * 0.012)
         records.append(_make_sample(lat, lng))
 
-    feat_cols = [f"f{i}" for i in range(17)]
+    feat_cols = [f"f{i}" for i in range(INPUT_DIM)]
     label_cols = ["signal", "drop_prob", "handoff_risk"]
     df = pd.DataFrame(records, columns=feat_cols + label_cols)
     return df

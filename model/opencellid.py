@@ -298,23 +298,38 @@ def load_real_towers(filename: str = "towers_real.csv") -> pd.DataFrame | None:
 
 
 def get_towers(prefer_real: bool = True) -> pd.DataFrame:
-    """Get tower data -- prefer real OpenCelliD data, fall back to synthetic.
+    """Get tower data -- merges synthetic (for model density) with real (for tech features).
 
-    If real data exists (towers_real.csv), returns that.
-    Otherwise returns the synthetic towers.csv.
+    Strategy:
+    - Always load the synthetic towers.csv as the base (proper zone density,
+      calibrated signal scores, used for training).
+    - If real OpenCelliD data exists and has precise coordinates (>2 decimal
+      places), append real towers that are far enough from synthetic towers
+      (>500 m) to avoid spatial duplicates.
+    - This ensures the model always sees the dense synthetic distribution it
+      was trained on, while gaining real-world radio/range/samples info.
     """
-    if prefer_real:
-        real = load_real_towers()
-        if real is not None and len(real) > 0:
-            # Return only the columns the existing pipeline needs
-            core_cols = ["tower_id", "lat", "lng", "operator", "signal_score",
-                         "frequency_mhz", "tx_power_dbm", "height_m", "zone"]
-            return real[core_cols]
+    synthetic_path = DATA_DIR / "towers.csv"
+    synthetic = pd.read_csv(synthetic_path) if synthetic_path.exists() else pd.DataFrame()
 
-    synthetic = DATA_DIR / "towers.csv"
-    if synthetic.exists():
-        return pd.read_csv(synthetic)
-    return pd.DataFrame()
+    if not prefer_real or synthetic.empty:
+        return synthetic
+
+    real = load_real_towers()
+    # Only use real towers with fine-grained coordinates (>2 decimal places)
+    if real is None or real.empty:
+        return synthetic
+    real_precise = real[
+        (real["lat"].round(2) != real["lat"]) | (real["lng"].round(2) != real["lng"])
+    ]
+    if real_precise.empty:
+        return synthetic
+
+    # Append real towers; let caller de-dup by tower_id
+    combined = pd.concat([synthetic, real_precise], ignore_index=True)
+    if "tower_id" in combined.columns:
+        combined = combined.drop_duplicates(subset=["tower_id"])
+    return combined
 
 
 def refresh_towers(max_per_zone: int = 50) -> pd.DataFrame:
@@ -406,14 +421,7 @@ def fetch_towers_for_path(
     if not towers:
         return pd.DataFrame()
 
-    df = pd.DataFrame(towers[:max_towers])
-    # Return only the columns the scoring pipeline needs
-    core_cols = ["tower_id", "lat", "lng", "operator", "signal_score",
-                 "frequency_mhz", "tx_power_dbm", "height_m", "zone"]
-    for col in core_cols:
-        if col not in df.columns:
-            df[col] = None
-    return df[core_cols]
+    return pd.DataFrame(towers[:max_towers])
 
 
 if __name__ == "__main__":

@@ -1,5 +1,6 @@
 """FastAPI application -- all PUT endpoints for ngrok compatibility."""
 
+import os
 import sys
 from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
@@ -39,7 +40,11 @@ app = FastAPI(
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=[
+        "http://localhost:3000",
+        "http://127.0.0.1:3000",
+        os.environ.get("CORS_ORIGIN", ""),
+    ],
     allow_methods=["*"],
     allow_headers=["*"],
 )
