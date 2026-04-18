@@ -7,6 +7,8 @@ export function useTracking(path: Coordinate[], active: boolean) {
   const [position, setPosition] = useState<Coordinate | null>(null);
   const indexRef = useRef(0);
   const intervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  /** Fraction of path completed (0..1) */
+  const [progress, setProgress] = useState(0);
 
   const stop = useCallback(() => {
     if (intervalRef.current) {
@@ -15,6 +17,7 @@ export function useTracking(path: Coordinate[], active: boolean) {
     }
     indexRef.current = 0;
     setPosition(null);
+    setProgress(0);
   }, []);
 
   useEffect(() => {
@@ -25,6 +28,7 @@ export function useTracking(path: Coordinate[], active: boolean) {
 
     indexRef.current = 0;
     setPosition(path[0]);
+    setProgress(0);
 
     intervalRef.current = setInterval(() => {
       indexRef.current += 1;
@@ -32,10 +36,11 @@ export function useTracking(path: Coordinate[], active: boolean) {
         indexRef.current = 0;
       }
       setPosition(path[indexRef.current]);
+      setProgress(path.length > 1 ? indexRef.current / (path.length - 1) : 0);
     }, 800);
 
     return stop;
   }, [active, path, stop]);
 
-  return { position, stop };
+  return { position, progress, stop };
 }

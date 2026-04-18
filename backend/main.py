@@ -13,6 +13,7 @@ import sys
 import random
 import asyncio
 import os
+import time as _time
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
@@ -472,6 +473,53 @@ async def _generate_routes(
 # =======================================================================
 
 # -----------------------------------------------------------------------
+# Route result cache (request clustering)
+# -----------------------------------------------------------------------
+# When multiple users request similar routes within a short time window
+# (e.g. same bus stop, same office), we cache the scored result to avoid
+# redundant model inference.  Cache key is (rounded coords, pref, telecom).
+# Coordinates are rounded to ~100m so nearby users share the same entry.
+
+_ROUTE_CACHE_TTL = 30  # seconds
+_route_cache: dict[str, tuple[float, dict]] = {}  # key -> (timestamp, response)
+
+
+def _route_cache_key(
+    src: tuple[float, float], dst: tuple[float, float],
+    preference: float, telecom: str,
+) -> str:
+    """Build a cache key by rounding coordinates to ~100m precision."""
+    return (
+        f"{round(src[0], 3)},{round(src[1], 3)}"
+        f"|{round(dst[0], 3)},{round(dst[1], 3)}"
+        f"|{int(preference)}|{telecom}"
+    )
+
+
+def _route_cache_get(key: str) -> dict | None:
+    """Return cached response if present and not expired."""
+    entry = _route_cache.get(key)
+    if entry is None:
+        return None
+    ts, response = entry
+    if _time.time() - ts > _ROUTE_CACHE_TTL:
+        del _route_cache[key]
+        return None
+    return response
+
+
+def _route_cache_put(key: str, response: dict) -> None:
+    """Store a response in the cache."""
+    # Evict expired entries periodically (simple lazy GC)
+    now = _time.time()
+    if len(_route_cache) > 50:
+        expired = [k for k, (ts, _) in _route_cache.items() if now - ts > _ROUTE_CACHE_TTL]
+        for k in expired:
+            del _route_cache[k]
+    _route_cache[key] = (now, response)
+
+
+# -----------------------------------------------------------------------
 # GET /api/routes
 # -----------------------------------------------------------------------
 
@@ -492,6 +540,14 @@ async def api_routes(
     telecom : "all", "jio", "airtel", "vi", or "multi" for multi-SIM optimization.
     """
     src, dst = await asyncio.gather(_resolve_location(source), _resolve_location(destination))
+
+    # Check route result cache (request clustering for concurrent users)
+    cache_key = _route_cache_key(src, dst, preference, telecom)
+    cached = _route_cache_get(cache_key)
+    if cached is not None:
+        cached["cache_hit"] = True
+        return cached
+
     route_dicts = await _generate_routes(src, dst)
 
     # Merge per-route live towers into one de-duplicated DataFrame for scoring
@@ -559,14 +615,17 @@ async def api_routes(
         results.append(entry)
 
     rec = results[0]["name"] if results else "None"
-    return {
+    response = {
         "source": source,
         "destination": destination,
         "preference": preference,
         "max_eta_factor": effective_max,
         "routes": results,
         "recommended_route": rec,
+        "cache_hit": False,
     }
+    _route_cache_put(cache_key, response)
+    return response
 
 
 # -----------------------------------------------------------------------

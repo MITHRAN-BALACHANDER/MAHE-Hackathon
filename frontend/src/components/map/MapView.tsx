@@ -321,28 +321,12 @@ export default function MapView({
     }
   }, [mapReady, routes, selectedRouteIndex, onRouteClick, handlePinDrag]);
 
-  // Draw zone markers with heatmap filter
+  // Zone badge markers removed -- individual tower dots are used instead
   useEffect(() => {
     if (!mapReady || !mapRef.current) return;
-    const map = mapRef.current;
-
     if (zoneLayerRef.current) {
       zoneLayerRef.current.clearLayers();
-    } else {
-      zoneLayerRef.current = L.layerGroup().addTo(map);
     }
-
-    heatmapZones.forEach((zone) => {
-      const icon = createZoneIcon(zone, heatmapFilter);
-      const marker = L.marker([zone.lat, zone.lng], { icon, interactive: true });
-
-      const filterLabel = heatmapFilter === "signal" ? "Signal" : heatmapFilter === "weather" ? "Weather Impact" : heatmapFilter === "traffic" ? "Traffic" : "Road Quality";
-      marker.bindTooltip(
-        `<b>${zone.name}</b><br/>${filterLabel}: ${zone.score.toFixed(1)}/100<br/>${zone.signal_strength}`,
-        { direction: "top", className: "zone-tooltip" },
-      );
-      zoneLayerRef.current!.addLayer(marker);
-    });
   }, [mapReady, heatmapZones, heatmapFilter]);
 
   // Draw individual tower dots at real OpenCelliD lat/lng

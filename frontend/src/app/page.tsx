@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import { ActionButtons } from "@/src/components/actions/ActionButtons";
 import { RouteBottomCard } from "@/src/components/common/RouteBottomCard";
@@ -14,7 +14,7 @@ import { useGeolocation } from "@/src/hooks/useGeolocation";
 import { useHeatmap, useReroute, useRoutes, useTowerMarkers } from "@/src/hooks/useMapData";
 import { useNetworkDetect } from "@/src/hooks/useNetworkDetect";
 import { useTracking } from "@/src/hooks/useTracking";
-import { offlineService, geocodeService, reverseGeocodeService } from "@/src/services/api";
+import { offlineService, geocodeService, reverseGeocodeService, routeService } from "@/src/services/api";
 import type { TelecomMode } from "@/src/types/route";
 
 export default function Home() {
@@ -74,9 +74,87 @@ export default function Home() {
 
   const selectedRoute = routes[selectedRouteIndex] ?? routes[0];
   const trackingPath = selectedRoute?.path ?? [];
-  const { position: trackingPosition } = useTracking(trackingPath, trackingActive);
+  const { position: trackingPosition, progress: trackingProgress } = useTracking(trackingPath, trackingActive);
 
   const etaDisplay = selectedRoute ? `${selectedRoute.eta} min` : "--";
+
+  // -----------------------------------------------------------------------
+  // Periodic re-prediction during active navigation
+  // -----------------------------------------------------------------------
+  // Re-evaluates the route every ~20% of remaining distance (or every 2 min
+  // minimum).  If an incident/accident changes conditions, the backend returns
+  // a better route which is applied automatically with a toast.
+  const lastRepredictProgress = useRef(0);
+  const repredictTimer = useRef<ReturnType<typeof setInterval> | null>(null);
+
+  useEffect(() => {
+    // Clean up timer when navigation stops
+    if (!trackingActive) {
+      if (repredictTimer.current) {
+        clearInterval(repredictTimer.current);
+        repredictTimer.current = null;
+      }
+      lastRepredictProgress.current = 0;
+      return;
+    }
+
+    // Calculate re-prediction interval based on route ETA
+    // Minimum 2 minutes, check every ~20% of total ETA
+    const etaMinutes = selectedRoute?.eta ?? 10;
+    const intervalMs = Math.max(2 * 60_000, (etaMinutes * 60_000 * 0.2));
+
+    repredictTimer.current = setInterval(() => {
+      // Only re-predict if we've moved at least 15% since last check
+      const progressDelta = trackingProgress - lastRepredictProgress.current;
+      if (progressDelta < 0.15) return;
+      lastRepredictProgress.current = trackingProgress;
+
+      // Skip if near the end (>90% done)
+      if (trackingProgress > 0.9) return;
+
+      // Get the current position on the path as the new source
+      const currentPos = trackingPosition;
+      if (!currentPos || !destination) return;
+
+      const src = `@${currentPos.lat},${currentPos.lng}`;
+      const dst = destCoords ? `@${destCoords.lat},${destCoords.lng}` : destination;
+
+      routeService
+        .getRoutes({
+          source: src,
+          destination: dst,
+          preference: Math.min(preference + 10, 100),
+          telecom,
+          max_eta_factor: maxEtaFactor,
+        })
+        .then((newData) => {
+          if (!newData?.routes?.length) return;
+          const best = newData.routes[0];
+          const current = selectedRoute;
+          // Apply new route if signal score improved by >10 or ETA dropped by >15%
+          if (
+            !current ||
+            best.signal_score > current.signal_score + 10 ||
+            best.eta < current.eta * 0.85
+          ) {
+            setSnapshotSrc(src);
+            setSnapshotDst(dst);
+            setSearchTrigger((n) => n + 1);
+            setHasSearched(true);
+            setSelectedRouteIndex(0);
+            setSuggestedRoute(best.name);
+          }
+        })
+        .catch(() => {});
+    }, intervalMs);
+
+    return () => {
+      if (repredictTimer.current) {
+        clearInterval(repredictTimer.current);
+        repredictTimer.current = null;
+      }
+    };
+  }, [trackingActive, selectedRoute, trackingProgress, trackingPosition, destination, destCoords, preference, telecom, maxEtaFactor]);
 
   // Toast message: reroute advisory OR bad zone warning
   const badZoneWarning = selectedRoute?.bad_zones?.[0]?.warning ?? null;

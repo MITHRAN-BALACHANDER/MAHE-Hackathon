@@ -60,6 +60,7 @@ export type RoutesResponse = {
   max_eta_factor?: number;
   routes: RouteOption[];
   recommended_route: string;
+  cache_hit?: boolean;
 };
 
 export type HeatmapZone = {

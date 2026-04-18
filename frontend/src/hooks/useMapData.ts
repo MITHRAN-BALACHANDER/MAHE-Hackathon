@@ -48,7 +48,7 @@ export function useTowers() {
 export function useTowerMarkers() {
   return useQuery({
     queryKey: ["tower-markers"],
-    queryFn: () => towerGeoService.fetchAll(300),
+    queryFn: () => towerGeoService.fetchAll(500),
     staleTime: 5 * 60_000,
     retry: 1,
   });

@@ -296,10 +296,10 @@ loss_ho   = F.binary_cross_entropy(ho.float(), y_ho)
 
 ## Limitations of the Project
 
-- **No real tower data**: Uses 500 synthetic towers. Real TRAI/carrier tower databases would significantly improve accuracy.
-- **Static route generation**: Routes are interpolated between zone centroids, not road-snapped. Real routing requires OSRM or Valhalla.
+- ~~**No real tower data**: Uses 500 synthetic towers.~~ **Resolved**: OpenCelliD integration fetches real tower lat/lng for Bangalore zones. Individual tower positions are rendered on the map at their actual coordinates.
+- **Static route generation**: Routes are interpolated between zone centroids, not road-snapped. Real routing requires OSRM or Valhalla. **Partially resolved**: TomTom routing API provides road-snapped geometry with up to 5 alternative routes.
 - **Single-server RL**: Bandit state is per-process; a load-balanced deployment would require Redis or a shared store.
-- **No live signal data**: The model uses static tower parameters. Real-time crowdsourced signal (like OpenCelliD) would enable dynamic re-scoring.
+- ~~**No live signal data**: The model uses static tower parameters.~~ **Resolved**: Real-time tower data fetched from OpenCelliD along each route path during route generation.
 - **Urban Bangalore only**: Zone definitions and tower placement cover 12.78-13.15N, 77.45-77.82E. Outside this bounding box, predictions degrade to physics defaults.
 - **Weather is a static parameter**: The user passes weather_factor; there is no integration with a weather API.
 
@@ -312,6 +312,67 @@ loss_ho   = F.binary_cross_entropy(ho.float(), y_ho)
 - **Model loading**: Lazy singleton ensures the 2.2MB checkpoint is loaded once at first request, not at server start.
 - **Feature extraction is CPU-bound**: `extract_features()` iterates over all towers in the DataFrame per segment point. With 500 towers, this is ~50,000 distance calculations per segment. Vectorised with NumPy haversine (`haversine_vec()`).
 - **RL update cost**: Beta distribution update is O(1). File write is the only latency; JSON with 10 intents per pattern writes in under 1ms.
+
+---
+
+## Recent Enhancements
+
+### Real Tower Positioning (OpenCelliD Integration)
+
+The map now renders individual cell towers at their real geographic coordinates from OpenCelliD data. A dedicated `GET /api/towers/geo` endpoint returns up to 500 tower positions with lat/lng, operator (Jio, Airtel, Vi, BSNL), signal score, and zone. Each tower is rendered as a color-coded dot on the Leaflet map (Jio=blue, Airtel=red, Vi=yellow, BSNL=green) replacing the earlier static zone-center badges.
+
+### TomTom Road-Snapped Routing
+
+Routes now use the TomTom Routing API for road-snapped geometry with up to 5 alternative paths. If TomTom returns fewer than 5 routes, synthetic alternatives are generated and appended to ensure visual variety on the map.
+
+### Nominatim Geocoding Pipeline
+
+Forward and reverse geocoding via OpenStreetMap Nominatim, with Bangalore viewbox bias (`77.35,12.70,77.82,13.20`), rate-limited via `asyncio.Semaphore(1)`, and LRU-cached. Reverse geocode uses `zoom=14` with `addressdetails=1` for suburb-level precision and smart name parsing.
+
+### Live GPS Location for Source
+
+When the browser grants geolocation, the app reverse-geocodes the GPS coordinates to populate the "From" field with a human-readable name, while using the raw GPS lat/lng (not the Nominatim-snapped position) as the routing source for maximum accuracy.
+
+### Periodic Re-prediction During Navigation
+
+Once navigation starts, the system periodically re-evaluates the route based on estimated travel progress:
+
+- **Interval**: `max(2 minutes, 20% of total ETA)` -- adapts to route length
+- **Progress gate**: only fires if the user has traveled at least 15% since the last check
+- **Skip near end**: no re-prediction after 90% progress
+- **Source**: uses the current tracking position as the new origin
+- **Application logic**: the new route is applied automatically only if signal score improves by >10 or ETA drops by >15%, preventing unnecessary route flickers
+
+This handles post-departure incidents (accidents, tower outages) that were invisible at planning time.
+
+### Request Clustering (Route Result Cache)
+
+Backend implements a 30-second TTL cache for the `GET /api/routes` endpoint. The cache key is `(src_lat_3dp, src_lng_3dp, dst_lat_3dp, dst_lng_3dp, preference, telecom)` -- coordinates rounded to 3 decimal places (~100m). When multiple users request similar routes within 30 seconds (e.g. same bus stop to same office at rush hour), only the first request runs model inference; subsequent requests get the cached result instantly.
+
+- **Key design**: coordinates rounded to ~100m eliminates trivial GPS jitter differences
+- **TTL**: 30 seconds balances freshness (traffic changes) vs compute savings
+- **Lazy GC**: expired entries are evicted when cache exceeds 50 entries
+- **Response field**: `cache_hit: true/false` in the API response for observability
+
+---
+
+## Updated API Surface
+
+### New Endpoints
+
+| Method | Path | Description |
+|---|---|---|
+| GET | /api/geocode | Forward geocode via Nominatim (location name to lat/lng) |
+| GET | /api/reverse-geocode | Reverse geocode via Nominatim (lat/lng to place name) |
+| GET | /api/towers/geo | Individual tower positions for map rendering |
+| GET | /api/detect-network | ISP detection via external IP lookup |
+
+### Updated Endpoints
+
+| Method | Path | Change |
+|---|---|---|
+| GET | /api/routes | Added 30s request clustering cache, `cache_hit` field, TomTom integration, up to 7 routes |
+| GET | /api/heatmap | Now uses OpenCelliD-enriched tower data for zone scoring |
 
 ---
 
