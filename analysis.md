@@ -53,7 +53,7 @@ Built the entire ML backend from scratch as the model engineer:
 | API Server | FastAPI 0.111.0 + Uvicorn 0.30.1 |
 | Data Processing | NumPy, Pandas, scikit-learn |
 | Frontend | Next.js 16.2.4, React 19, TypeScript |
-| Maps | Leaflet + react-leaflet |
+| Maps | Mapbox GL JS (premium layered rendering) |
 | Charts | Chart.js + react-chartjs-2 |
 | Styling | Tailwind CSS v4 |
 | HTTP Client | Axios |
@@ -68,7 +68,9 @@ Built the entire ML backend from scratch as the model engineer:
 
 **FastAPI**: Automatic Pydantic validation, async-capable, OpenAPI docs generated for free. All-PUT endpoint design was required for ngrok tunnel compatibility (ngrok free tier blocks non-PUT HTTP methods inconsistently on some NAT setups).
 
-**Next.js / React 19**: The frontend teammate's choice. The `src/app` directory structure and server/client component split made it straightforward to keep map rendering client-only (Leaflet requires `window`).
+**Next.js / React 19**: The frontend teammate's choice. The `src/app` directory structure and server/client component split made it straightforward to keep map rendering client-only (Mapbox GL JS requires `window`, loaded via `next/dynamic` with `ssr: false`).
+
+**Mapbox GL JS**: Chosen over Leaflet for WebGL-accelerated vector tile rendering, native GeoJSON LineString support, layered line styling (glow/casing/main for premium route visuals), smooth camera transitions, and pitch/bearing 3D support. Routes render with 200-300+ geometry points from TomTom, following real roads precisely.
 
 **Thompson Sampling (RL)**: Chosen over deep RL (DQN, PPO) because the problem has a small discrete action space (10 intents) and sparse rewards. Thompson Sampling provides principled uncertainty quantification with essentially zero training cost, converges in 3-5 observations, and is fully interpretable.
 
@@ -114,11 +116,12 @@ Built the entire ML backend from scratch as the model engineer:
    using zone geography and interpolated waypoints
 
 4. rank_routes() calls score_route() per route:
-     a. For each path segment, extract_features() builds a 17-dim feature vector:
-        [dist_to_nearest, signal_quality, towers_in_2km, time_cos, time_sin,
-         weather_factor, speed_kmh, height_diff, zone_penalty, freq_mhz,
-         tx_power, load_factor, terrain_code, rain_attenuation, ...]
-     b. ResidualSignalNet forward pass -> (signal_score, drop_prob, handoff_risk)
+     a. For each path segment, extract_features() builds a 22-dim feature vector:
+        [dist_nearest, dist_2nd, dist_3rd, towers_500m, towers_1km, towers_2km,
+         nearest_sig, max_sig_nearby, avg_sig_nearby, freq_norm, road_type,
+         time_cos, time_sin, weather, speed_norm, nearest_raw_sig, load_factor,
+         radio_gen, range_norm, sample_count, radio_diversity, terrain_type]
+     b. MC Dropout inference (8 forward passes) -> (signal_score, drop_prob, handoff_risk) + uncertainty
      c. Physics validation: received_signal_dbm() using COST-231 Hata +
         Ericsson 9999 ensemble (55/45 weight) + ITU-R P.1238 structure loss
 
@@ -127,7 +130,7 @@ Built the entire ML backend from scratch as the model engineer:
 
 6. Response returns route list + recommended_route name
 
-7. Frontend renders paths on Leaflet map, colored by segment signal strength
+7. Frontend renders paths on Mapbox GL JS map with layered styling (glow + casing + main line)
 ```
 
 For RL auto-routing:
@@ -160,15 +163,218 @@ Every route segment is scored using an ensemble of real-world propagation models
 - **ITU-R P.1238**: Building penetration and floor attenuation loss
 - Rain attenuation (ITU-R P.838) and shadow fading (log-normal, sigma=8dB)
 
-The ResidualSignalNet (558,979 parameters) learns residuals on top of these physics priors, achieving R2=0.9243 on held-out test data.
+The ResidualSignalNet (560,259 parameters) learns residuals on top of these physics priors, achieving R2=0.8978 on held-out test data.
 
 ### 2. Dead Zone Detection and Task Feasibility
 
-`detect_bad_zones()` identifies contiguous route segments where signal drops below 40 (configurable threshold). For each zone it reports: GPS coordinates, duration in minutes, distance in km, and proximity to the zone. `assess_task_feasibility()` then asks: "Can I complete a 30-minute Zoom call on this route?" and answers with the longest stable connectivity window vs. required duration.
+`detect_bad_zones()` identifies contiguous route segments where signal drops below 30 (configurable threshold `BAD_ZONE_THRESHOLD` in config.py). For each zone it reports: GPS coordinates, duration in minutes, distance in km, and proximity to the zone. `assess_task_feasibility()` then asks: "Can I complete a 30-minute Zoom call on this route?" and answers with the longest stable connectivity window vs. required duration.
 
 ### 3. RL-Powered Intent Learning per User
 
 The contextual bandit maintains independent Beta(alpha, beta) distributions per `(user_id, time_bucket, day_type, origin_zone, dest_zone)` pattern. This naturally handles the multi-user scenario: son drives 7:30 AM Jayanagar->Koramangala daily (learns "meeting", preference=85), dad drives 10:00 AM same route (learns "navigation", preference=10). Same origin/destination, different time = different patterns = independent learning with no interference.
+
+---
+
+## Model Architecture: SignalNet
+
+The signal prediction model is a multi-task residual MLP defined in `model/architecture.py`.
+
+### Network Topology
+
+```
+Input (22 features)
+  |
+  Linear(22 -> 256) + SiLU    [Projection layer]
+  |
+  ResidualBlock x4 (256)       [Pre-activation: BN -> SiLU -> Linear -> BN -> SiLU -> Linear + skip]
+  |
+  Linear(256 -> 64) + SiLU     [Bottleneck]
+  |
+  +-- TaskHead -> signal_strength   (sigmoid, 0-1 scaled to 0-100)
+  +-- TaskHead -> drop_probability  (sigmoid, 0-1)
+  +-- TaskHead -> handoff_risk      (sigmoid, 0-1)
+```
+
+### Hyperparameters (model/config.py)
+
+| Parameter | Value |
+|---|---|
+| INPUT_DIM | 22 |
+| HIDDEN_DIM | 256 |
+| RESIDUAL_BLOCKS | 4 |
+| BOTTLENECK_DIM | 64 |
+| HEAD_HIDDEN | 32 |
+| DROPOUT | 0.12 |
+| Total parameters | 560,259 |
+| Checkpoint size | 2.2 MB |
+
+### Training Configuration
+
+| Setting | Value |
+|---|---|
+| Optimizer | AdamW (lr=3e-4, weight_decay=1e-5) |
+| Scheduler | Cosine warmup (10 warmup epochs + cosine decay) |
+| Batch size | 1024 |
+| Max epochs | 300 (early stop at epoch 101, best at epoch 66) |
+| Early stop patience | 35 epochs |
+| Gradient clipping | max_norm=1.0 |
+| Label smoothing | eps=0.02 |
+| Mixed precision | float16 forward pass, float32 loss (AMP) |
+
+### Multi-Task Loss
+
+```
+L = 1.0 * MSE(signal_pred, signal_true)
+  + 0.6 * BCE(drop_pred, drop_true)
+  + 0.4 * BCE(handoff_pred, handoff_true)
+```
+
+BCE losses are computed outside `torch.amp.autocast` to avoid float16 numerical instability (NaN gradients from log-sigmoid underflow).
+
+### 22-Dimensional Input Feature Vector
+
+| Index | Feature | Source |
+|---|---|---|
+| 0 | Distance to nearest tower (km) | Haversine from path point to closest tower |
+| 1 | Distance to 2nd nearest tower (km) | Haversine |
+| 2 | Distance to 3rd nearest tower (km) | Haversine |
+| 3 | Number of towers within 500m | Spatial query |
+| 4 | Number of towers within 1km | Spatial query |
+| 5 | Number of towers within 2km | Spatial query |
+| 6 | Signal score of nearest tower (norm) | Tower database |
+| 7 | Max signal score nearby (norm) | Tower database |
+| 8 | Average signal score nearby (norm) | Tower database |
+| 9 | Frequency of nearest tower (norm) | Tower database |
+| 10 | Road type / terrain code | Zone configuration |
+| 11 | Time cosine (cos(2*pi*hour/24)) | Request time |
+| 12 | Time sine (sin(2*pi*hour/24)) | Request time |
+| 13 | Weather factor (0-1) | OpenWeather API |
+| 14 | Speed (normalised, /120 km/h) | Route segment estimate |
+| 15 | Nearest tower signal (raw norm) | Tower database |
+| 16 | Tower load factor | Time-of-day simulation |
+| 17 | Radio generation encoding | Tower database (GSM=0.2, LTE=0.6, NR=0.8) |
+| 18 | Nearest tower range (normalised) | Tower database |
+| 19 | Nearest tower sample count (log-norm) | Tower database / OpenCelliD |
+| 20 | Radio type diversity (normalised) | Tower database |
+| 21 | Terrain type code | Zone configuration |
+
+### Route Scoring Pipeline (model/scoring.py)
+
+`score_route()` processes each route path segment:
+1. For each segment point, `extract_features()` builds a 22-dim vector using the tower database, time, weather, and terrain
+2. The feature vector is passed through SignalNet with MC Dropout (8 forward passes) -> (signal, drop_prob, handoff_risk) + uncertainty estimates
+3. Physics validation cross-checks against COST-231 Hata + Ericsson 9999 ensemble
+4. Aggregate metrics computed: mean signal, mean drop probability, signal variance, dead zone count, continuity score, drops per km, confidence level, stability score
+
+`rank_routes()` scores all candidate routes and ranks by:
+```
+weighted_score = preference * signal_norm + (1 - preference) * eta_norm
+```
+With penalties for:
+- Drop segments > 3 (-10 pts)
+- Max drop probability > 0.7 (-5 pts)
+- Single-tower dependency ratio > 0.4 (-5 pts)
+- Low avg connectivity < BAD_ZONE_THRESHOLD (-15 pts)
+- High signal variance > 400 (-5 pts)
+- Drops per km > 2.0 (-8 pts) or > 1.0 (-4 pts)
+- Low MC Dropout confidence (-7 pts)
+- All thresholds and penalties are centralised in `model/config.py`
+
+### Test Results
+
+| Metric | Value |
+|---|---|
+| Signal MAE | 7.42% |
+| Signal RMSE | 10.50% |
+| Signal R2 | 0.8978 |
+| Drop probability accuracy | 91.1% |
+| Drop precision / recall / F1 | 87.6% / 85.9% / 86.8% |
+| Handoff risk accuracy | 96.8% |
+| Handoff precision / recall / F1 | 97.1% / 96.8% / 96.9% |
+| Bad-zone detection F1 | 89.7% |
+| Drop calibration ECE | 0.0141 |
+| Final val_loss | 0.41212 (best at epoch 66) |
+| Stopped at epoch | 101 / 300 (early stop, patience=35) |
+
+#### Per-Bucket Signal Accuracy
+
+| Bucket | Samples | MAE | RMSE |
+|---|---|---|---|
+| Dead (0-15%) | 3,465 | 5.44% | 8.82% |
+| Poor (15-35%) | 2,717 | 9.36% | 13.30% |
+| Fair (35-55%) | 2,276 | 9.19% | 11.73% |
+| Good (55-75%) | 1,351 | 8.94% | 10.96% |
+| Great (75-100%) | 2,332 | 5.49% | 6.97% |
+
+#### Edge-Zone Analysis
+
+Edge zones (tunnels, underpasses, urban canyons) have higher error due to extreme signal attenuation:
+- Samples: 1,161 | MAE: 17.46% | RMSE: 22.06%
+- Mean actual: 49.3% | Mean predicted: 64.0% (model overestimates in edge zones)
+
+#### MC Dropout Uncertainty Quantification
+
+The model uses MC Dropout (8 forward passes with dropout active, BatchNorm kept in eval mode) to estimate prediction uncertainty. Confidence levels:
+- **High**: avg uncertainty < 3.0 and > 80% of segments have low uncertainty
+- **Medium**: avg uncertainty < 8.0 and > 50% of segments have low uncertainty  
+- **Low**: otherwise
+
+#### Geo-Spatial Cross-Validation
+
+Training uses tile-based spatial splitting (~2.2 km tiles, TILE_SIZE=0.02 degrees) to prevent data leakage between geographically adjacent samples. 471 tiles are divided into train/val/test (70/15/15). Falls back to random split if lat/lng columns are missing.
+
+---
+
+## Two-Phase Loading Architecture
+
+The frontend uses a two-phase loading pattern to show routes instantly while ML scoring runs in the background.
+
+### Phase 1: Fast Routes (~2-3 seconds)
+
+`GET /api/routes/fast` returns TomTom-routed paths with heuristic signal scores:
+- TomTom provides up to 7 road-snapped alternative routes
+- Signal scores are computed using zone density + terrain heuristics (no ML inference, no tower API calls)
+- Heuristic scoring: `density_score = {"high": 75, "medium": 55, "low": 35}` + `terrain_bonus = {"urban_main": 10, "residential": 5, "suburban": 0, "highway": -5}`
+- Routes are tagged (fastest, best_signal, best_overall) and sorted by weighted score
+- Frontend shows routes immediately with these scores
+
+### Phase 2: Full ML Scoring (~15-60 seconds)
+
+`GET /api/routes` runs the complete pipeline:
+- TomTom routing + OpenCelliD tower fetch + ResidualSignalNet inference + weather + traffic flow
+- When results arrive, frontend replaces the heuristic scores with ML scores
+- A pulsing indicator shows "Running ML models..." during this phase
+
+### Frontend Implementation
+
+React Query manages both phases independently:
+- `useFastRoutes()`: staleTime 60s, retry 1 -- fires immediately
+- `useRoutes()`: staleTime 30s, retry 1 -- fires in parallel, results replace fast data when ready
+- `displayRoutes` is a `useMemo` that maps fast routes to the full RouteOption shape until ML data arrives
+- Route intent toggle ("speed" | "signal") controls sorting preference
+
+---
+
+## Mapbox GL JS Route Rendering
+
+The map uses Mapbox GL JS with WebGL-accelerated vector tile rendering, replacing the earlier Leaflet implementation.
+
+### Layered Route Styling
+
+Each selected route renders with 3 GeoJSON layers for a premium appearance:
+1. **Glow layer**: width 18, opacity 0.12, blur 10 -- soft ambient highlight
+2. **Casing layer**: dark color (#1e3a5f), width 9, opacity 0.35 -- depth/shadow effect
+3. **Main line**: route color, width 5, opacity 1 -- the visible route path
+
+Alternative (unselected) routes render with dashed lines at 50% opacity and respond to hover (popup with route name/ETA) and click (route selection).
+
+### Map Features
+
+- Draggable A/B pin markers with `dragend` events that fire `onPinDrag` for live rerouting
+- Tower dot markers color-coded by operator (Jio=blue, Airtel=red, Vi=yellow, BSNL=green)
+- Smooth camera flyTo with padding and pitch adjustments on route change
+- User location marker with heading indicator
+- Tracking position marker with CSS pulse animation
 
 ---
 
@@ -300,17 +506,18 @@ loss_ho   = F.binary_cross_entropy(ho.float(), y_ho)
 - **Static route generation**: Routes are interpolated between zone centroids, not road-snapped. Real routing requires OSRM or Valhalla. **Partially resolved**: TomTom routing API provides road-snapped geometry with up to 5 alternative routes.
 - **Single-server RL**: Bandit state is per-process; a load-balanced deployment would require Redis or a shared store.
 - ~~**No live signal data**: The model uses static tower parameters.~~ **Resolved**: Real-time tower data fetched from OpenCelliD along each route path during route generation.
-- **Urban Bangalore only**: Zone definitions and tower placement cover 12.78-13.15N, 77.45-77.82E. Outside this bounding box, predictions degrade to physics defaults.
+- **Urban Bangalore only**: Zone definitions and tower placement cover 12.78-13.15N, 77.45-77.82E (25 zones + 12 edge zones). Outside this bounding box, predictions degrade to physics defaults.
 - **Weather is a static parameter**: The user passes weather_factor; there is no integration with a weather API.
 
 ---
 
 ## Performance Considerations
 
-- **GPU inference**: ResidualSignalNet forward pass is ~0.8ms on RTX 5050. A full route score (20-30 segments) completes in under 30ms including feature extraction.
-- **Heatmap endpoint latency**: `GET /api/heatmap` runs inference for all 20 zones sequentially (~600ms total). Should be cached with a TTL.
+- **GPU inference**: ResidualSignalNet forward pass is ~0.8ms on RTX 5050. MC Dropout uncertainty (8 samples) adds ~6ms. A full route score (20-30 segments) completes in under 50ms including feature extraction.
+- **Heatmap endpoint latency**: `GET /api/heatmap` runs inference for all 25 zones sequentially (~750ms total). Should be cached with a TTL.
 - **Model loading**: Lazy singleton ensures the 2.2MB checkpoint is loaded once at first request, not at server start.
-- **Feature extraction is CPU-bound**: `extract_features()` iterates over all towers in the DataFrame per segment point. With 500 towers, this is ~50,000 distance calculations per segment. Vectorised with NumPy haversine (`haversine_vec()`).
+- **Feature extraction is CPU-bound**: `extract_features()` iterates over all towers in the DataFrame per segment point. With 500 towers, this is ~50,000 distance calculations per segment. Vectorised with NumPy haversine (`haversine_vec()`). Data quality guards clip ranges and replace NaN/inf with 0.
+- **Centralised configuration**: All hyperparameters, scoring thresholds, feature normalisation constants, and penalty values are defined in `model/config.py` -- no hardcoded magic numbers in model code.
 - **RL update cost**: Beta distribution update is O(1). File write is the only latency; JSON with 10 intents per pattern writes in under 1ms.
 
 ---
@@ -319,7 +526,7 @@ loss_ho   = F.binary_cross_entropy(ho.float(), y_ho)
 
 ### Real Tower Positioning (OpenCelliD Integration)
 
-The map now renders individual cell towers at their real geographic coordinates from OpenCelliD data. A dedicated `GET /api/towers/geo` endpoint returns up to 500 tower positions with lat/lng, operator (Jio, Airtel, Vi, BSNL), signal score, and zone. Each tower is rendered as a color-coded dot on the Leaflet map (Jio=blue, Airtel=red, Vi=yellow, BSNL=green) replacing the earlier static zone-center badges.
+The map now renders individual cell towers at their real geographic coordinates from OpenCelliD data. A dedicated `GET /api/towers/geo` endpoint returns up to 500 tower positions with lat/lng, operator (Jio, Airtel, Vi, BSNL), signal score, and zone. Each tower is rendered as a color-coded dot on the Mapbox GL JS map (Jio=blue, Airtel=red, Vi=yellow, BSNL=green) replacing the earlier static zone-center badges.
 
 ### TomTom Road-Snapped Routing
 
@@ -355,16 +562,32 @@ The system integrates the OpenWeather API to factor real-time weather conditions
 - **Integration**: The weather factor multiplies into the signal prediction at route scoring time, penalising routes through areas with adverse weather
 - **Frontend**: A `WeatherBadge` component shows current conditions (icon, temperature, signal impact) overlaid on the map
 
-### Crowd/Traffic Congestion Persistence Tracking
+### Real-Time Traffic Congestion via TomTom Flow API
 
-Beyond static signal scoring, the system tracks crowd/congestion patterns that affect tower load and signal quality:
+Congestion data is sourced live from the **TomTom Traffic API** instead of using static time-of-day simulation. Two TomTom services are used:
 
-- **Module**: `backend/crowd_tracker.py` implements a grid-based congestion memory
-- **Grid resolution**: ~500m cells (coordinates rounded to `lat*200, lng*200`)
-- **Persistence**: Running average of congestion scores per cell. A cell becomes an "active alert" after the average exceeds a threshold for 5+ minutes
-- **Staleness**: Cells with no updates for 30 minutes are evicted automatically
-- **Seeding**: When routes are scored, their congestion data is recorded into the tracker
-- **Alert endpoint**: `GET /api/alerts` returns active congestion alerts near the user's position or along a specified path
+**Flow Segment Data** (`/traffic/services/4/flowSegmentData`):
+- Returns `currentSpeed` and `freeFlowSpeed` (km/h) for the road segment nearest to any lat/lng
+- Congestion ratio = `1 - currentSpeed / freeFlowSpeed` (0 = free-flowing, 1 = standstill)
+- Cached per ~500m grid cell for 90 seconds to avoid API quota pressure
+- Dedicated endpoint: `GET /api/traffic-flow?lat=...&lng=...` — returns current speed, free-flow speed, confidence, congestion ratio, source
+- Tested: MG Road Bangalore at evening → 19 km/h current vs 26 km/h free-flow → 0.269 congestion ratio
+
+**Traffic Incidents** (`/traffic/services/5/incidentDetails`):
+- Returns accidents, road closures, queuing traffic, slow traffic within a bounding box
+- Per-incident data: lat/lng, description, severity (low/medium/high), from/to road names, delay seconds
+- Dedicated endpoint: `GET /api/incidents?min_lat=...&min_lng=...&max_lat=...&max_lng=...`
+- Tested: Central Bangalore bbox → 77 live incidents returned with full street detail
+
+**Graceful fallback**: When TomTom is unavailable (network error, quota exceeded, no API key), the system falls back to a time-of-day + zone-density simulation so routing still works offline.
+
+**Crowd/congestion persistence tracking** (`backend/crowd_tracker.py`):
+- Samples up to 20 path points per route, fetches live TomTom flow for each
+- Crowd level = blend of real congestion (70%) + time-based pedestrian estimate (30%)
+- ~500m grid cells with running-average persistence. Cells active for ≥5 min with ≥2 samples and congestion/crowd > 0.65 trigger alerts
+- Stale entries (no update in 30 min) are evicted lazily
+- Alert messages include real speeds: "current 19 km/h vs free-flow 26 km/h"
+- `GET /api/alerts` returns on-route alerts first, then by proximity
 
 ### Multi-Carrier Dead Zone Prediction
 
@@ -372,7 +595,7 @@ The system predicts signal quality for all major carriers (Jio, Airtel, Vi, BSNL
 
 - **Module**: `backend/dead_zone_predictor.py`
 - **Function**: `predict_carrier_zones(path, towers_df, time_hour, weather_factor, speed_kmh)`
-- **Per-carrier scoring**: Each carrier's towers are filtered from the tower database. For each path point, distance-based signal strength is computed with the ResidualSignalNet model, weighted by time-of-day and weather factor
+- **Per-carrier scoring**: Each carrier's towers are filtered from the tower database. For each path point, the ResidualSignalNet model with MC Dropout predicts signal strength, drop probability, and handoff risk, weighted by time-of-day and weather factor
 - **Dead zone definition**: A segment where ALL carriers predict signal strength < 30 (on 0-100 scale)
 - **Output per route**: `carrier_dead_zones` (list of dead zone segments with coordinates, length, duration, area name, per-carrier signal levels) and `carrier_summary` (per-carrier average signal, minimum signal, count of weak segments)
 - **Dedicated endpoint**: `GET /api/dead-zones?source=...&destination=...&time_hour=14` returns full carrier-level analysis for trip planning at specific times
@@ -420,13 +643,17 @@ Backend implements a 30-second TTL cache for the `GET /api/routes` endpoint. The
 | GET | /api/detect-network | ISP detection via external IP lookup |
 | GET | /api/weather | Live weather + signal impact for a lat/lng |
 | GET | /api/alerts | Congestion/crowd persistence alerts along a path |
+| GET | /api/traffic-flow | Real-time TomTom traffic flow (speed + congestion ratio) for a road point |
+| GET | /api/incidents | TomTom traffic incidents within a bounding box |
 | GET | /api/dead-zones | Multi-carrier dead zone prediction at a specific time of day |
+| GET | /api/network-strength | Browser network + ISP signal strength estimation |
 
 ### Updated Endpoints
 
 | Method | Path | Change |
 |---|---|---|
 | GET | /api/routes | Added 30s request clustering cache, `cache_hit` field, TomTom integration, up to 7 routes. Now includes `weather`, `call_drop_stats`, per-route `carrier_dead_zones`, `carrier_summary`, and `offline_alerts` |
+| GET | /api/routes/fast | New two-phase endpoint: returns TomTom routes with heuristic signal scores in ~2-3s (no ML inference, no tower fetch) |
 | GET | /api/heatmap | Now uses OpenCelliD-enriched tower data for zone scoring |
 
 ---
@@ -454,12 +681,14 @@ Backend implements a 30-second TTL cache for the `GET /api/routes` endpoint. The
 ## Testing Done
 
 **Unit / Integration (automated):**
+- `test_models.py`: Comprehensive 12-component test suite covering config, architecture (560,259 params, forward pass shapes, output ranges), propagation (COST-231 Hata, Ericsson 9999, ITU structure loss, rain attenuation, shadow fading), utils (haversine, feature extraction with full/empty/single towers, edge zones, load factor), inference (predict_single, MC Dropout uncertainty, batch predict, edge cases), scoring (score_route, rank_routes with penalties), bad_zones (detection, task feasibility), explainability (recommendation text, bad zone descriptions), smart_preference (all 10 intents, fuzzy matching), rl_learning (time buckets, day types, zone mapping, Thompson Sampling), evaluate (full metrics suite), and schemas (Pydantic validation). **73 tests, all pass.**
+- `test_integration.py`: API integration tests for predict-signal, score-routes, route scoring, and full routes endpoints. **4 tests, all pass.**
 - `model/test_api.py`: Tests all 5 core PUT model endpoints (score-routes, predict-signal, analyze-route, detect-zones, health). Validates response schema and non-null recommended_route.
 - `model/test_smart.py`: Tests 5 smart-route intent scenarios (meeting, fastest, call, navigation, free-text fuzzy match), intent resolution preview, and the preference learning loop (record 5 choices, verify learned preference).
 - `backend/test_rl.py`: Full RL scenario test -- trains son (5 morning trips) and dad (5 mid-morning trips), verifies independent pattern learning (different pattern keys), auto-route returns `rl_learned` source with correct intent, guest user correctly returns `exploration_needed=True`. Also validates all 4 frontend endpoints.
 
 **Manual:**
-- Opened the Next.js frontend in Chrome, verified Leaflet map renders 3 routes with colour-coded signal segments.
+- Opened the Next.js frontend in Chrome, verified Mapbox GL JS map renders routes with layered styling (glow/casing/main) and smooth camera transitions.
 - Verified heatmap zones display correct strong/medium/weak colouring.
 - Tested the preference slider (0=fastest, 100=best signal) produces reordered route recommendations.
 - Triggered "Smart Reroute" button, verified advisory message appears.
@@ -501,7 +730,7 @@ The `docker-compose.yml` defines two services: `backend` (Python/FastAPI) and `f
 | NumPy / Pandas | Feature engineering and data generation |
 | scikit-learn | Train/val/test split, StandardScaler |
 | Next.js 16 | Frontend framework |
-| Leaflet | Interactive route map |
+| Mapbox GL JS | WebGL route map with layered rendering |
 | Chart.js | Signal strength bar charts |
 | pnpm | Node package manager (workspace-aware) |
 | VS Code | Primary IDE |
@@ -519,15 +748,19 @@ The `docker-compose.yml` defines two services: `backend` (Python/FastAPI) and `f
 
 | Metric | Value |
 |---|---|
-| Signal prediction R2 | 0.9243 |
-| Drop probability accuracy | 93.4% |
-| Handoff risk accuracy | 96.9% |
-| Model parameters | 558,979 |
+| Signal prediction R2 | 0.8978 |
+| Signal MAE | 7.42% |
+| Signal RMSE | 10.50% |
+| Drop probability accuracy | 91.1% |
+| Handoff risk accuracy | 96.8% |
+| Bad-zone detection F1 | 89.7% |
+| Drop calibration ECE | 0.0141 |
+| Model parameters | 560,259 |
 | Training samples | 100,000 |
-| Synthetic towers | 500 (20 Bangalore zones) |
-| API endpoints | 14 (7 frontend + 7 model) |
+| Synthetic towers | 500 (25 Bangalore zones + 12 edge zones) |
+| API endpoints | 16 (9 frontend + 7 model) |
 | RL convergence | 3-5 trips to confident prediction |
-| Final training val_loss | 0.41014 (epoch 90 of 300, early stop) |
+| Final training val_loss | 0.41212 (best at epoch 66, early stop at 101) |
 
 The RL system correctly differentiates two users driving the same route at different times of day after 5 demonstration trips each, with 0.857 confidence for the dominant intent and 0.919-0.975 confidence on live Thompson samples.
 
@@ -552,7 +785,7 @@ The RL system correctly differentiates two users driving the same route at diffe
 
 **Thompson Sampling is underrated for small action spaces**: The hackathon instinct is to reach for deep RL. Thompson Sampling required zero training infrastructure, converged in single-digit observations, and the Beta distribution parameters are directly interpretable (alpha=successes, beta=failures). For problems with fewer than ~20 discrete actions and sparse rewards, it outperforms DQN on both speed and sample efficiency.
 
-**Synthetic data generation requires domain physics**: The first version generated random signal scores. The model trained to R2=0.3. Switching to physics-based ground truth (COST-231 Hata + Ericsson 9999 propagation models) immediately pushed R2 to 0.92. The model learns real signal-distance relationships instead of noise.
+**Synthetic data generation requires domain physics**: The first version generated random signal scores. The model trained to R2=0.3. Switching to physics-based ground truth (COST-231 Hata + Ericsson 9999 propagation models) immediately pushed R2 to 0.90. The model learns real signal-distance relationships instead of noise.
 
 **Scaffolded files cause subtle build failures**: Running `create-next-app` or a shadcn initialiser inside an existing project creates conflicting `app/` directories. Next.js will silently prefer the root-level `app/` over `src/app/`, breaking the build with cryptic CSS import errors (`tw-animate-css not found`). Always audit for duplicate app directory roots after running any scaffolding tool.
 

@@ -12,23 +12,45 @@ import torch
 
 from model.config import (
     DATA_DIR, WEIGHTS_DIR, INPUT_DIM, SEED,
-    TRAIN_SPLIT, VAL_SPLIT,
+    TRAIN_SPLIT, VAL_SPLIT, TILE_SIZE,
 )
 from model.architecture import SignalNet
 
 
 def load_test_data(seed: int = SEED):
-    """Load samples.csv and return only the test split as numpy arrays."""
+    """Load samples.csv and return only the test split as numpy arrays.
+
+    Uses spatial tile-based splitting (matching train.py) to prevent leakage.
+    Falls back to random split if lat/lng columns are missing.
+    """
     df = pd.read_csv(DATA_DIR / "samples.csv")
     n = len(df)
     rng = np.random.default_rng(seed)
-    perm = rng.permutation(n)
-
-    n_train = int(n * TRAIN_SPLIT)
-    n_val = int(n * VAL_SPLIT)
-    test_idx = perm[n_train + n_val:]
 
     feat_cols = [f"f{i}" for i in range(INPUT_DIM)]
+
+    if "sample_lat" in df.columns and "sample_lng" in df.columns:
+        tile_ids = (
+            (df["sample_lat"] // TILE_SIZE).astype(int).astype(str)
+            + "_"
+            + (df["sample_lng"] // TILE_SIZE).astype(int).astype(str)
+        )
+        unique_tiles = np.array(sorted(tile_ids.unique()))
+        rng.shuffle(unique_tiles)
+
+        n_tiles = len(unique_tiles)
+        n_train_tiles = int(n_tiles * TRAIN_SPLIT)
+        n_val_tiles = int(n_tiles * VAL_SPLIT)
+        test_tiles = set(unique_tiles[n_train_tiles + n_val_tiles:])
+
+        test_mask = tile_ids.isin(test_tiles).values
+        test_idx = np.where(test_mask)[0]
+    else:
+        perm = rng.permutation(n)
+        n_train = int(n * TRAIN_SPLIT)
+        n_val = int(n * VAL_SPLIT)
+        test_idx = perm[n_train + n_val:]
+
     X = df[feat_cols].values[test_idx].astype(np.float32)
     y_sig = df["signal"].values[test_idx].astype(np.float32)
     y_drop = df["drop_prob"].values[test_idx].astype(np.float32)
@@ -137,6 +159,42 @@ def feature_correlation(X: np.ndarray, y: np.ndarray) -> list[tuple[str, float]]
     return corrs
 
 
+def bad_zone_detection_metrics(y_true: np.ndarray, y_pred: np.ndarray, threshold: float = 0.30):
+    """F1/precision/recall for detecting bad signal zones (signal < threshold)."""
+    true_bad = (y_true < threshold).astype(int)
+    pred_bad = (y_pred < threshold).astype(int)
+    tp = int(np.sum((pred_bad == 1) & (true_bad == 1)))
+    fp = int(np.sum((pred_bad == 1) & (true_bad == 0)))
+    fn = int(np.sum((pred_bad == 0) & (true_bad == 1)))
+    tn = int(np.sum((pred_bad == 0) & (true_bad == 0)))
+    prec = tp / max(tp + fp, 1)
+    rec = tp / max(tp + fn, 1)
+    f1 = 2 * prec * rec / max(prec + rec, 1e-8)
+    return {
+        "threshold": threshold,
+        "precision": round(prec, 4),
+        "recall": round(rec, 4),
+        "f1": round(f1, 4),
+        "n_true_bad": int(true_bad.sum()),
+        "n_pred_bad": int(pred_bad.sum()),
+        "confusion": {"TP": tp, "FP": fp, "FN": fn, "TN": tn},
+    }
+
+
+def calibration_error(y_true: np.ndarray, y_pred: np.ndarray, n_bins: int = 10) -> float:
+    """Expected Calibration Error for drop probability."""
+    bin_edges = np.linspace(0, 1, n_bins + 1)
+    ece = 0.0
+    for lo, hi in zip(bin_edges[:-1], bin_edges[1:]):
+        mask = (y_pred >= lo) & (y_pred < hi)
+        if mask.sum() == 0:
+            continue
+        avg_pred = y_pred[mask].mean()
+        avg_true = y_true[mask].mean()
+        ece += mask.sum() / len(y_true) * abs(avg_pred - avg_true)
+    return round(float(ece), 4)
+
+
 # ---------------------------------------------------------------------------
 # Main
 # ---------------------------------------------------------------------------
@@ -209,6 +267,20 @@ def evaluate(model_path: str | None = None):
         bar = "#" * int(abs(r) * 50)
         print(f"  {name:17s}  {r:+.4f}  {bar}")
 
+    # --- Bad-zone detection ---
+    print("\n=== Bad-Zone Detection (signal < 0.30) ===")
+    bz = bad_zone_detection_metrics(y_sig, pred_s, threshold=0.30)
+    print(f"  True bad zones:  {bz['n_true_bad']}")
+    print(f"  Pred bad zones:  {bz['n_pred_bad']}")
+    print(f"  Precision:       {bz['precision'] * 100:.1f}%")
+    print(f"  Recall:          {bz['recall'] * 100:.1f}%")
+    print(f"  F1:              {bz['f1'] * 100:.1f}%")
+
+    # --- Calibration error for drop probability ---
+    print("\n=== Drop Probability Calibration ===")
+    ece = calibration_error(y_drop, pred_d)
+    print(f"  ECE (Expected Calibration Error): {ece:.4f}")
+
     print("\n[eval] Done.")
     return {
         "signal": sig_m,
@@ -217,6 +289,8 @@ def evaluate(model_path: str | None = None):
         "buckets": buckets,
         "edge_zone": ez,
         "feature_corr": corrs,
+        "bad_zone": bz,
+        "drop_calibration_ece": ece,
     }
 
 

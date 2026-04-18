@@ -11,6 +11,7 @@ type Props = {
   onSelect: (index: number) => void;
   onClose: () => void;
   visible: boolean;
+  enriching?: boolean;
 };
 
 function signalBadge(score: number) {
@@ -34,6 +35,7 @@ export function RouteSidebar({
   onSelect,
   onClose,
   visible,
+  enriching,
 }: Props) {
   if (!visible || routes.length === 0) return null;
 
@@ -51,6 +53,9 @@ export function RouteSidebar({
         <h2 className="text-sm font-semibold text-gray-800">Routes</h2>
         <span className="ml-auto text-xs text-gray-400">
           {routes.length} options
+          {enriching && (
+            <span className="ml-1 text-blue-400 animate-pulse">-- refining</span>
+          )}
         </span>
       </div>
 
@@ -118,6 +123,7 @@ export function RouteSidebar({
                 >
                   <Signal size={10} />
                   {badge.label} {Math.round(route.signal_score)}
+                  {enriching && <span className="ml-0.5 text-gray-400 animate-pulse">~</span>}
                 </span>
               </div>
 

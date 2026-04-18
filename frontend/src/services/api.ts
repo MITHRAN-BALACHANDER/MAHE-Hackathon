@@ -9,6 +9,7 @@ import type {
   RerouteResponse,
   RouteQueryParams,
   RoutesResponse,
+  FastRoutesResponse,
   TowerSummary,
   TowerMarker,
   TowerMarkersResponse,
@@ -21,12 +22,21 @@ const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8001";
 
 const client = axios.create({
   baseURL: API_BASE_URL,
-  timeout: 60_000,
+  timeout: 180_000,
 });
 
 export const routeService = {
+  /** Full route scoring with ML, towers, weather, dead zones. Slow (~30-60s). */
   async getRoutes(params: RouteQueryParams): Promise<RoutesResponse> {
     const { data } = await client.get<RoutesResponse>("/api/routes", { params });
+    return data;
+  },
+
+  /** Fast geometry-only routes from TomTom. No signal scoring. Returns in ~1-2s. */
+  async getFastRoutes(source: string, destination: string): Promise<FastRoutesResponse> {
+    const { data } = await client.get<FastRoutesResponse>("/api/routes/fast", {
+      params: { source, destination },
+    });
     return data;
   },
 

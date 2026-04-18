@@ -187,6 +187,26 @@ export type RouteQueryParams = {
   max_eta_factor?: number;
 };
 
+export type FastRouteOption = {
+  name: string;
+  eta: number;
+  distance: number;
+  path: Coordinate[];
+  zones?: string[];
+  signal_score: number;
+  weighted_score: number;
+  tags?: string[];
+  traffic_delay?: number;
+};
+
+export type FastRoutesResponse = {
+  source: string;
+  destination: string;
+  routes: FastRouteOption[];
+  recommended_route: string;
+  phase: "fast";
+};
+
 export type TowerSummary = {
   source: string;
   count: number;

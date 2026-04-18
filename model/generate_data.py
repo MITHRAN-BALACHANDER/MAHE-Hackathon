@@ -319,7 +319,7 @@ def generate_samples(towers_df: pd.DataFrame, n_samples: int = N_SAMPLES, seed: 
         traf = float(rng.choice([0.0, 0.0, 0.0, 0.1, 0.3, 0.5, 0.7, 1.0]))
         feats = extract_features(lat, lng, towers_df, t_h, w_f, spd, traf)
         sig, drop, ho = compute_ground_truth(lat, lng, towers_df, rng, t_h, w_f, spd)
-        return (*feats, sig / 100.0, drop, ho)
+        return (lat, lng, *feats, sig / 100.0, drop, ho)
 
     # --- Random points across Bangalore ---
     print(f"  [gen] {n_random} random points ...")
@@ -356,9 +356,10 @@ def generate_samples(towers_df: pd.DataFrame, n_samples: int = N_SAMPLES, seed: 
         lng = zinfo["center"][1] + rng.normal(0, zinfo["radius_km"] * 0.012)
         records.append(_make_sample(lat, lng))
 
+    geo_cols = ["sample_lat", "sample_lng"]
     feat_cols = [f"f{i}" for i in range(INPUT_DIM)]
     label_cols = ["signal", "drop_prob", "handoff_risk"]
-    df = pd.DataFrame(records, columns=feat_cols + label_cols)
+    df = pd.DataFrame(records, columns=geo_cols + feat_cols + label_cols)
     return df
 
 

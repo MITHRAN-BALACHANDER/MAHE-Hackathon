@@ -29,8 +29,8 @@ from model.smart_preference import (
     resolve_intent, get_smart_preference, record_choice, _load_profiles,
 )
 from model.utils import extract_features, detect_edge_zone
-from model.inference import predict_single
-from model.config import WEIGHTS_PATH, DATA_DIR, EDGE_ZONES
+from model.inference import predict_single, predict_single_with_uncertainty
+from model.config import WEIGHTS_PATH, DATA_DIR, EDGE_ZONES, MC_SAMPLES, HANDOFF_RISK_THRESHOLD
 
 app = FastAPI(
     title="SignalRoute Model API",
@@ -84,7 +84,7 @@ def _detect_edge_cases(conn: dict, bad_zones_list: list) -> list[str]:
             f"Single-tower dependency on {conn['single_tower_dependency_segments']} segment(s) "
             "-- if that tower fails, signal is lost"
         )
-    if conn.get("avg_handoff_risk", 0) > 0.4:
+    if conn.get("avg_handoff_risk", 0) > HANDOFF_RISK_THRESHOLD:
         cases.append("High handoff risk -- frequent tower switching expected at this speed")
     if conn.get("continuity_score", 100) < 50:
         cases.append("Low continuity -- signal fluctuates significantly along the route")
@@ -205,15 +205,17 @@ def predict_signal_endpoint(req: PredictSignalRequest):
         req.lat, req.lng, towers_df,
         req.time_hour, req.weather_factor, req.speed_kmh,
     )
-    result = predict_single(feats)
+    result = predict_single_with_uncertainty(feats, n_samples=MC_SAMPLES)
 
     _, _, edge_name, _ = detect_edge_zone(req.lat, req.lng)
     nearby = int(feats[5])  # towers_within_2km
 
     sig = result["signal_strength"]
-    if sig >= 70:
+    # MC Dropout confidence: low uncertainty + good signal = high confidence
+    uncertainty = result["signal_uncertainty"]
+    if uncertainty < 3.0 and nearby >= 2:
         conf = "high"
-    elif sig >= 40:
+    elif uncertainty < 8.0 and nearby >= 1:
         conf = "medium"
     else:
         conf = "low"

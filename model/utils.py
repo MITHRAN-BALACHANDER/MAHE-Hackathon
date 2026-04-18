@@ -6,6 +6,8 @@ import pandas as pd
 from model.config import (
     EARTH_RADIUS_KM, EDGE_ZONES, EDGE_TYPE_TO_TERRAIN, ZONES,
     TERRAIN_CODE, TERRAIN_TO_ENV,
+    RADIO_ENCODING, RANGE_NORMALIZATION, SAMPLE_COUNT_NORM,
+    SPEED_NORMALIZATION,
 )
 
 
@@ -136,6 +138,19 @@ def extract_features(
     """
     feats = np.zeros(22, dtype=np.float32)
 
+    if towers_df.empty or "lat" not in towers_df.columns:
+        feats[:3] = 10.0
+        feats[8] = nearest_zone_terrain(lat, lng) / 6.0
+        edge_terrain, _, _, _ = detect_edge_zone(lat, lng)
+        feats[9] = edge_terrain / 6.0
+        feats[11] = np.sin(2 * np.pi * time_hour / 24.0)
+        feats[12] = np.cos(2 * np.pi * time_hour / 24.0)
+        feats[13] = float(weather_factor)
+        feats[14] = min(speed_kmh / 120.0, 1.0)
+        feats[16] = tower_load_factor(time_hour)
+        feats[21] = float(traffic_factor)
+        return feats
+
     t_lats = towers_df["lat"].values.astype(float)
     t_lngs = towers_df["lng"].values.astype(float)
     dists = haversine_vec(lat, lng, t_lats, t_lngs)
@@ -179,7 +194,7 @@ def extract_features(
 
     # --- Real-time features (17-21) ---
     # f17: radio generation of nearest tower
-    radio_gen_map = {"GSM": 0.2, "UMTS": 0.4, "LTE": 0.6, "NR": 0.8, "NBIOT": 0.3}
+    radio_gen_map = RADIO_ENCODING
     radios = towers_df["radio"].values if "radio" in towers_df.columns else None
     if radios is not None:
         feats[17] = radio_gen_map.get(str(radios[order[0]]), 0.5)
@@ -197,11 +212,11 @@ def extract_features(
 
     # f18: nearest tower coverage range (normalised)
     ranges = _safe_col(towers_df, "range_m", 2000.0)
-    feats[18] = min(ranges[order[0]] / 50000.0, 1.0)
+    feats[18] = min(ranges[order[0]] / RANGE_NORMALIZATION, 1.0)
 
     # f19: nearest tower sample count (log-normalised data quality)
     samples = _safe_col(towers_df, "samples", 10.0)
-    feats[19] = min(np.log1p(samples[order[0]]) / np.log1p(1000.0), 1.0)
+    feats[19] = min(np.log1p(samples[order[0]]) / np.log1p(SAMPLE_COUNT_NORM), 1.0)
 
     # f20: tower technology diversity within 2km (unique radio types / 5)
     if radios is not None:
@@ -212,6 +227,23 @@ def extract_features(
 
     # f21: traffic congestion factor (from TomTom route data)
     feats[21] = float(np.clip(traffic_factor, 0.0, 1.0))
+
+    # --- Data quality guards: clip all features to valid ranges ---
+    feats[0:3] = np.clip(feats[0:3], 0.0, 50.0)     # distances (km)
+    feats[3:6] = np.clip(feats[3:6], 0.0, 200.0)     # tower counts
+    feats[6:8] = np.clip(feats[6:8], 0.0, 1.0)       # normalised signals
+    feats[8:10] = np.clip(feats[8:10], 0.0, 1.0)     # terrain codes
+    feats[10] = np.clip(feats[10], 0.0, 1.5)          # freq normalised
+    feats[11:13] = np.clip(feats[11:13], -1.0, 1.0)  # sin/cos
+    feats[13:16] = np.clip(feats[13:16], 0.0, 1.0)   # weather/speed/signal
+    feats[16] = np.clip(feats[16], 0.0, 1.0)          # load factor
+    feats[17] = np.clip(feats[17], 0.0, 1.0)          # radio gen
+    feats[18:20] = np.clip(feats[18:20], 0.0, 1.0)   # range/samples
+    feats[20] = np.clip(feats[20], 0.0, 1.0)          # diversity
+    feats[21] = np.clip(feats[21], 0.0, 1.0)          # traffic
+
+    # Replace NaN/inf with 0
+    feats = np.nan_to_num(feats, nan=0.0, posinf=1.0, neginf=0.0)
 
     return feats
 

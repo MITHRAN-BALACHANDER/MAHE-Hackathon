@@ -525,6 +525,125 @@ def _route_cache_put(key: str, response: dict) -> None:
 
 
 # -----------------------------------------------------------------------
+# GET /api/routes/fast  --  instant route geometry (no ML scoring)
+# -----------------------------------------------------------------------
+
+@app.get("/api/routes/fast")
+async def api_routes_fast(
+    source: str = Query("MIT", max_length=200),
+    destination: str = Query("Airport", max_length=200),
+):
+    """Return route geometry FAST with heuristic scoring.
+
+    Runs TomTom routing only (no tower lookup, no ML inference).
+    Estimates signal quality from zone density/terrain metadata for
+    instant display.  The frontend upgrades to full ML scores once
+    ``/api/routes`` completes in the background.
+    """
+    src, dst = await asyncio.gather(
+        _resolve_location(source), _resolve_location(destination)
+    )
+
+    # TomTom routing only (no tower fetching, no ML)
+    if _tomtom._api_key:
+        try:
+            tt_routes = await _tomtom.get_routes(src, dst)
+        except Exception:
+            tt_routes = None
+    else:
+        tt_routes = None
+
+    if tt_routes and tt_routes[0].get("geometry"):
+        total_dist = haversine(src[0], src[1], dst[0], dst[1])
+        routes = []
+        for i, tt in enumerate(tt_routes[:_MAX_ROUTES]):
+            path = tt["geometry"]
+            dist_km = 0.0
+            for j in range(len(path) - 1):
+                dist_km += haversine(
+                    path[j]["lat"], path[j]["lng"],
+                    path[j + 1]["lat"], path[j + 1]["lng"],
+                )
+            dist_km = dist_km if dist_km > 0 else total_dist
+            name = _ROUTE_NAMES[i] if i < len(_ROUTE_NAMES) else f"Route {i + 1}"
+            zones = _zones_along_path(path)
+            routes.append({
+                "name": name,
+                "eta": tt["eta"],
+                "distance": round(dist_km, 1),
+                "path": path,
+                "zones": zones,
+                "traffic_delay": tt.get("traffic_delay", 0),
+            })
+    else:
+        # Synthetic fallback -- still fast, no towers needed
+        syn = _generate_routes_sync(src, dst)
+        routes = [
+            {
+                "name": r["name"], "eta": r["eta"],
+                "distance": r["distance"], "path": r["path"],
+                "zones": r.get("zones", []),
+            }
+            for r in syn[:_MAX_ROUTES]
+        ]
+
+    # ------------------------------------------------------------------
+    # Heuristic signal scoring (no ML, no towers -- instant)
+    # ------------------------------------------------------------------
+    _density_score = {"high": 75, "medium": 55, "low": 35}
+    _terrain_bonus = {
+        "urban_main": 10, "residential": 5, "suburban": 0,
+        "highway": -5,
+    }
+
+    for r in routes:
+        zone_names = r.get("zones", [])
+        if zone_names:
+            scores = []
+            for zn in zone_names:
+                z = ZONES.get(zn)
+                if not z:
+                    continue
+                base = _density_score.get(z.get("density", "low"), 35)
+                bonus = _terrain_bonus.get(z.get("terrain", "suburban"), 0)
+                scores.append(base + bonus)
+            r["signal_score"] = round(sum(scores) / len(scores), 1) if scores else 50
+        else:
+            r["signal_score"] = 45  # unknown area fallback
+
+        # Simple weighted score (50/50 speed vs signal for now)
+        max_eta = max((rt["eta"] for rt in routes), default=1) or 1
+        speed_norm = 1 - (r["eta"] / max_eta)
+        sig_norm = r["signal_score"] / 100
+        r["weighted_score"] = round(speed_norm * 50 + sig_norm * 50, 2)
+
+    # Sort by weighted_score descending and tag best categories
+    routes.sort(key=lambda x: x["weighted_score"], reverse=True)
+
+    fastest = min(routes, key=lambda x: x["eta"])
+    best_signal = max(routes, key=lambda x: x["signal_score"])
+    best_overall = routes[0] if routes else None
+
+    for r in routes:
+        tags = []
+        if r is fastest:
+            tags.append("fastest")
+        if r is best_signal:
+            tags.append("best_signal")
+        if r is best_overall:
+            tags.append("best_overall")
+        r["tags"] = tags
+
+    return {
+        "source": source,
+        "destination": destination,
+        "routes": routes,
+        "recommended_route": best_overall["name"] if best_overall else "",
+        "phase": "fast",
+    }
+
+
+# -----------------------------------------------------------------------
 # GET /api/routes
 # -----------------------------------------------------------------------
 
@@ -581,8 +700,8 @@ async def api_routes(
         include_multi_sim=include_multi_sim,
     )
 
-    # Seed crowd tracker so persistent congestion can be detected on later requests
-    _crowd.seed_from_routes(ranked, now_hour)
+    # Seed crowd tracker with real TomTom flow data (async)
+    await _crowd.seed_from_routes(ranked, now_hour)
 
     # Multi-carrier dead zone prediction for each route
     carrier_results = []
@@ -620,6 +739,10 @@ async def api_routes(
             "continuity_score": r.get("continuity_score", 50),
             "signal_variance": r.get("signal_variance", 0),
             "longest_stable_window": r.get("longest_stable_window", 0),
+            # Reliability metrics
+            "drops_per_km": r.get("drops_per_km", 0),
+            "confidence": r.get("confidence", "medium"),
+            "avg_uncertainty": r.get("avg_uncertainty", 0),
             # Bad zone predictions
             "bad_zones": [
                 {
@@ -749,6 +872,59 @@ async def api_alerts(
 
     alerts = _crowd.get_active_alerts(user_lat, user_lng, path_list)
     return {"alerts": alerts, "count": len(alerts)}
+
+
+# -----------------------------------------------------------------------
+# GET /api/traffic-flow
+# -----------------------------------------------------------------------
+
+@app.get("/api/traffic-flow")
+async def api_traffic_flow(
+    lat: float = Query(..., ge=-90, le=90),
+    lng: float = Query(..., ge=-180, le=180),
+):
+    """Real-time TomTom Traffic Flow for a single road point.
+
+    Returns current speed, free-flow speed, confidence, and congestion
+    ratio (0 = free-flowing, 1 = standstill).
+    Falls back to a time-of-day estimate when TomTom is unavailable.
+    """
+    import datetime as _dt
+    hour = _dt.datetime.now().hour + _dt.datetime.now().minute / 60.0
+    flow = await _crowd.get_flow(lat, lng)
+    if flow:
+        return {**flow, "lat": lat, "lng": lng}
+    # Fallback
+    crowd = _crowd._fallback_crowd(lat, lng, hour)
+    return {
+        "lat": lat,
+        "lng": lng,
+        "current_speed_kmh": 0,
+        "free_flow_speed_kmh": 0,
+        "confidence": 0,
+        "congestion_ratio": crowd * 0.5,
+        "source": "fallback",
+    }
+
+
+# -----------------------------------------------------------------------
+# GET /api/incidents
+# -----------------------------------------------------------------------
+
+@app.get("/api/incidents")
+async def api_incidents(
+    min_lat: float = Query(..., ge=-90, le=90),
+    min_lng: float = Query(..., ge=-180, le=180),
+    max_lat: float = Query(..., ge=-90, le=90),
+    max_lng: float = Query(..., ge=-180, le=180),
+):
+    """TomTom Traffic Incidents within a bounding box.
+
+    Returns accidents, road closures, and other incidents with their
+    severity, description, and estimated delay.
+    """
+    incidents = await _crowd.get_incidents_bbox(min_lat, min_lng, max_lat, max_lng)
+    return {"incidents": incidents, "count": len(incidents)}
 
 
 # -----------------------------------------------------------------------

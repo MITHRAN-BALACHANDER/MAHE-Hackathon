@@ -123,6 +123,41 @@ SIGNAL_WEAK = 20
 BAD_ZONE_THRESHOLD = 30
 MAX_ETA_RATIO = 1.5
 
+# MC Dropout & uncertainty
+MC_SAMPLES = 8
+UNCERTAINTY_LOW = 3.0       # below this = low uncertainty
+UNCERTAINTY_HIGH = 8.0      # above this = high uncertainty
+UNCERTAINTY_SEG_THRESHOLD = 5.0  # per-segment low-unc threshold
+LOW_UNC_FRACTION_HIGH = 0.8     # fraction of low-unc segments for "high" confidence
+LOW_UNC_FRACTION_MED = 0.5      # fraction for "medium" confidence
+HANDOFF_RISK_THRESHOLD = 0.4    # high handoff risk cutoff
+
+# Scoring penalties & weights
+CONTINUITY_WEIGHT = 2.5
+STABILITY_SCORE_WEIGHTS = (0.5, 0.5)   # (continuity, stable_fraction)
+STABILITY_BONUS_FACTOR = 10.0
+SINGLE_TOWER_DEPENDENCY_RATIO = 0.4
+DROP_SEGMENTS_PENALTY_THRESHOLD = 3
+DROP_SEGMENTS_PENALTY = 10
+MAX_DROP_PROB_PENALTY_THRESHOLD = 0.7
+MAX_DROP_PROB_PENALTY = 5
+DROPS_PER_KM_PENALTY_THRESHOLD = 2.0
+DROPS_PER_KM_PENALTY = 8
+LOW_CONFIDENCE_PENALTY = 7
+
+# Feature normalization
+RADIO_ENCODING = {"GSM": 0.2, "UMTS": 0.4, "LTE": 0.6, "NR": 0.8, "NBIOT": 0.3}
+RANGE_NORMALIZATION = 50_000.0       # tower range normalization (metres)
+SAMPLE_COUNT_NORM = 1000.0           # sample count log normalization
+MAX_TOWER_DIVERSITY = 5.0            # radio-type diversity divisor
+SPEED_NORMALIZATION = 120.0          # max speed (km/h)
+
+# Geo-split
+TILE_SIZE = 0.02  # ~2.2 km tiles for spatial cross-validation
+
+# RL learning
+MIN_CONFIDENCE = 0.55
+
 # ---------------------------------------------------------------------------
 # Data generation
 # ---------------------------------------------------------------------------

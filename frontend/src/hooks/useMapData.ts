@@ -5,6 +5,24 @@ import { useMutation, useQuery } from "@tanstack/react-query";
 import { heatmapService, predictionService, routeService, towerService, towerGeoService } from "@/src/services/api";
 import type { RerouteRequest, RouteQueryParams } from "@/src/types/route";
 
+/**
+ * Fast route fetch -- geometry only, no ML scoring.
+ * Returns TomTom routes in ~1-2s for instant map display.
+ */
+export function useFastRoutes(source: string, destination: string, enabled: boolean) {
+  return useQuery({
+    queryKey: ["fast-routes", source, destination],
+    queryFn: () => routeService.getFastRoutes(source, destination),
+    enabled: enabled && !!source && !!destination,
+    staleTime: 60_000,
+    retry: 1,
+  });
+}
+
+/**
+ * Full route scoring with ML, towers, weather, dead zones.
+ * Runs in background after fast routes are displayed.
+ */
 export function useRoutes(params: RouteQueryParams) {
   return useQuery({
     queryKey: ["routes", params],

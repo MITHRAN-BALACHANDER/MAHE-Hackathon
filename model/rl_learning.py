@@ -17,6 +17,7 @@ import numpy as np
 from pathlib import Path
 
 from model.config import DATA_DIR, ZONES
+import model.config as cfg
 from model.utils import haversine
 from model.smart_preference import INTENT_PROFILES
 
@@ -81,7 +82,7 @@ class ContextualBandit:
     """
 
     MIN_OBS = 3
-    MIN_CONFIDENCE = 0.55
+    MIN_CONFIDENCE = cfg.MIN_CONFIDENCE
 
     _SAFE_ID = __import__("re").compile(r"^[a-zA-Z0-9_\-]{1,64}$")
 

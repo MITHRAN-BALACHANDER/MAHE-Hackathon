@@ -28,23 +28,58 @@ from model.architecture import SignalNet
 # ---------------------------------------------------------------------------
 
 def load_and_split(path: Path, seed: int = SEED):
-    """Load samples.csv and return train/val/test tensor tuples."""
+    """Load samples.csv and return train/val/test tensor tuples.
+
+    Uses spatial tile-based splitting to prevent geographic leakage:
+    points in the same tile always go to the same split.
+    Falls back to random split if lat/lng columns are missing.
+    """
     df = pd.read_csv(path)
     n = len(df)
     rng = np.random.default_rng(seed)
-    perm = rng.permutation(n)
-
-    n_train = int(n * TRAIN_SPLIT)
-    n_val = int(n * VAL_SPLIT)
-    train_idx = perm[:n_train]
-    val_idx = perm[n_train:n_train + n_val]
-    test_idx = perm[n_train + n_val:]
 
     feat_cols = [f"f{i}" for i in range(INPUT_DIM)]
     X = df[feat_cols].values.astype(np.float32)
     y_sig = df["signal"].values.astype(np.float32)
     y_drop = df["drop_prob"].values.astype(np.float32)
     y_ho = df["handoff_risk"].values.astype(np.float32)
+
+    if "sample_lat" in df.columns and "sample_lng" in df.columns:
+        # Geo-split: assign each sample to a spatial tile, then split tiles
+        TILE_SIZE = 0.02  # ~2.2 km tiles
+        tile_ids = (
+            (df["sample_lat"] // TILE_SIZE).astype(int).astype(str)
+            + "_"
+            + (df["sample_lng"] // TILE_SIZE).astype(int).astype(str)
+        )
+        unique_tiles = np.array(sorted(tile_ids.unique()))
+        rng.shuffle(unique_tiles)
+
+        n_tiles = len(unique_tiles)
+        n_train_tiles = int(n_tiles * TRAIN_SPLIT)
+        n_val_tiles = int(n_tiles * VAL_SPLIT)
+
+        train_tiles = set(unique_tiles[:n_train_tiles])
+        val_tiles = set(unique_tiles[n_train_tiles:n_train_tiles + n_val_tiles])
+        # test_tiles = remaining
+
+        train_mask = tile_ids.isin(train_tiles).values
+        val_mask = tile_ids.isin(val_tiles).values
+        test_mask = ~train_mask & ~val_mask
+
+        train_idx = np.where(train_mask)[0]
+        val_idx = np.where(val_mask)[0]
+        test_idx = np.where(test_mask)[0]
+        print(f"[train] Geo-split: {n_tiles} tiles -> "
+              f"train={len(train_idx)}, val={len(val_idx)}, test={len(test_idx)}")
+    else:
+        # Fallback: random split (backward compat with old samples.csv)
+        perm = rng.permutation(n)
+        n_train = int(n * TRAIN_SPLIT)
+        n_val = int(n * VAL_SPLIT)
+        train_idx = perm[:n_train]
+        val_idx = perm[n_train:n_train + n_val]
+        test_idx = perm[n_train + n_val:]
 
     def _to_tensors(idx):
         return (

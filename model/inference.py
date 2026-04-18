@@ -7,7 +7,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 import numpy as np
 import torch
 
-from model.config import INPUT_DIM, WEIGHTS_PATH
+from model.config import INPUT_DIM, WEIGHTS_PATH, MC_SAMPLES
 from model.architecture import SignalNet
 
 # ---------------------------------------------------------------------------
@@ -46,7 +46,7 @@ def predict(features: np.ndarray) -> dict:
 
     Parameters
     ----------
-    features : (N, 17) float32 array
+    features : (N, 22) float32 array
 
     Returns
     -------
@@ -71,13 +71,69 @@ def predict(features: np.ndarray) -> dict:
     }
 
 
+def predict_with_uncertainty(features: np.ndarray, n_samples: int = MC_SAMPLES) -> dict:
+    """MC Dropout inference: run model multiple times with dropout enabled.
+
+    Returns mean predictions plus uncertainty (std) for each output.
+    """
+    _load_model()
+
+    if features.ndim == 1:
+        features = features.reshape(1, -1)
+
+    x = torch.tensor(features, dtype=torch.float32).to(_device)
+
+    # Enable dropout only (keep BatchNorm in eval mode to avoid batch_size=1 crash)
+    _model.eval()
+    for m in _model.modules():
+        if isinstance(m, torch.nn.Dropout):
+            m.train()
+
+    sigs, drops, handoffs = [], [], []
+    with torch.no_grad():
+        for _ in range(n_samples):
+            s, d, h = _model(x)
+            sigs.append(s.cpu().numpy())
+            drops.append(d.cpu().numpy())
+            handoffs.append(h.cpu().numpy())
+
+    # Restore full eval mode
+    _model.eval()
+
+    sigs = np.stack(sigs)       # (n_samples, N)
+    drops = np.stack(drops)     # (n_samples, N)
+    handoffs = np.stack(handoffs)
+
+    return {
+        "signal_strength": np.mean(sigs, axis=0) * 100.0,
+        "drop_probability": np.mean(drops, axis=0),
+        "handoff_risk": np.mean(handoffs, axis=0),
+        "signal_uncertainty": np.std(sigs, axis=0) * 100.0,
+        "drop_uncertainty": np.std(drops, axis=0),
+        "handoff_uncertainty": np.std(handoffs, axis=0),
+    }
+
+
 def predict_single(features: np.ndarray) -> dict:
-    """Predict for a single (17,) feature vector. Returns scalar values."""
+    """Predict for a single (22,) feature vector. Returns scalar values."""
     result = predict(features.reshape(1, -1))
     return {
         "signal_strength": float(result["signal_strength"][0]),
         "drop_probability": float(result["drop_probability"][0]),
         "handoff_risk": float(result["handoff_risk"][0]),
+    }
+
+
+def predict_single_with_uncertainty(features: np.ndarray, n_samples: int = MC_SAMPLES) -> dict:
+    """MC Dropout prediction for a single point with uncertainty."""
+    result = predict_with_uncertainty(features.reshape(1, -1), n_samples=n_samples)
+    return {
+        "signal_strength": float(result["signal_strength"][0]),
+        "drop_probability": float(result["drop_probability"][0]),
+        "handoff_risk": float(result["handoff_risk"][0]),
+        "signal_uncertainty": float(result["signal_uncertainty"][0]),
+        "drop_uncertainty": float(result["drop_uncertainty"][0]),
+        "handoff_uncertainty": float(result["handoff_uncertainty"][0]),
     }
 
 

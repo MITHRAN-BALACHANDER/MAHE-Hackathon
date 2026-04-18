@@ -8,8 +8,19 @@ import numpy as np
 import pandas as pd
 
 from model.utils import extract_features, haversine, segment_distances
-from model.inference import predict
-from model.config import BAD_ZONE_THRESHOLD, MAX_ETA_RATIO, OPERATORS
+from model.inference import predict, predict_with_uncertainty
+from model.config import (
+    BAD_ZONE_THRESHOLD, MAX_ETA_RATIO, OPERATORS,
+    MC_SAMPLES, CONTINUITY_WEIGHT, UNCERTAINTY_SEG_THRESHOLD,
+    UNCERTAINTY_LOW, UNCERTAINTY_HIGH,
+    LOW_UNC_FRACTION_HIGH, LOW_UNC_FRACTION_MED,
+    STABILITY_SCORE_WEIGHTS, STABILITY_BONUS_FACTOR,
+    SINGLE_TOWER_DEPENDENCY_RATIO,
+    DROP_SEGMENTS_PENALTY_THRESHOLD, DROP_SEGMENTS_PENALTY,
+    MAX_DROP_PROB_PENALTY_THRESHOLD, MAX_DROP_PROB_PENALTY,
+    DROPS_PER_KM_PENALTY_THRESHOLD, DROPS_PER_KM_PENALTY,
+    LOW_CONFIDENCE_PENALTY,
+)
 
 
 def _ensure_towers_df(towers) -> pd.DataFrame:
@@ -65,10 +76,11 @@ def score_route(
         for p in path
     ])
 
-    preds = predict(feats)
+    preds = predict_with_uncertainty(feats, n_samples=MC_SAMPLES)
     seg_signal = preds["signal_strength"]      # (N,) 0-100
     seg_drop = preds["drop_probability"]       # (N,) 0-1
     seg_handoff = preds["handoff_risk"]        # (N,) 0-1
+    seg_signal_unc = preds["signal_uncertainty"]  # (N,) MC dropout std
 
     # Segment distances
     seg_dists = segment_distances(path)  # (N-1,)
@@ -80,7 +92,7 @@ def score_route(
     drop_segments = int(np.sum(seg_signal < BAD_ZONE_THRESHOLD))
 
     # Continuity: low variance = more stable
-    continuity_score = float(max(0, 100 - np.std(seg_signal) * 2.5))
+    continuity_score = float(max(0, 100 - np.std(seg_signal) * CONTINUITY_WEIGHT))
 
     # Longest stable window (consecutive points with signal >= 50)
     longest_stable = 0
@@ -117,8 +129,24 @@ def score_route(
     # longest_stable as fraction of total, weighted into 0-100
     stable_fraction = longest_stable / max(len(seg_signal), 1)
     stability_score = float(
-        0.5 * continuity_score + 0.5 * (stable_fraction * 100)
+        STABILITY_SCORE_WEIGHTS[0] * continuity_score + STABILITY_SCORE_WEIGHTS[1] * (stable_fraction * 100)
     )
+
+    # --- Drops per km (signal drops below threshold per unit distance) ---
+    total_dist_km = float(np.sum(seg_dists)) if len(seg_dists) > 0 else 1.0
+    drops_per_km = drop_segments / max(total_dist_km, 0.1)
+
+    # --- MC Dropout uncertainty metrics ---
+    avg_uncertainty = float(np.mean(seg_signal_unc))
+    max_uncertainty = float(np.max(seg_signal_unc))
+    # Confidence: low uncertainty + enough towers = high confidence
+    low_unc_frac = float(np.mean(seg_signal_unc < UNCERTAINTY_SEG_THRESHOLD))
+    if avg_uncertainty < UNCERTAINTY_LOW and low_unc_frac > LOW_UNC_FRACTION_HIGH:
+        confidence = "high"
+    elif avg_uncertainty < UNCERTAINTY_HIGH and low_unc_frac > LOW_UNC_FRACTION_MED:
+        confidence = "medium"
+    else:
+        confidence = "low"
 
     return {
         "segment_signals": seg_signal.tolist(),
@@ -138,6 +166,10 @@ def score_route(
         "avg_handoff_risk": round(avg_handoff_risk, 4),
         "single_tower_dependency_segments": single_tower_count,
         "total_segments": len(path),
+        "drops_per_km": round(drops_per_km, 2),
+        "avg_uncertainty": round(avg_uncertainty, 2),
+        "max_uncertainty": round(max_uncertainty, 2),
+        "confidence": confidence,
     }
 
 
@@ -279,16 +311,16 @@ def rank_routes(
         sig_norm = 100.0 * ((conn["avg_connectivity"] - min_sig) / sig_range)
 
         # Stability bonus: up to +10 points for high stability
-        stability_bonus = conn["stability_score"] / 100.0 * 10.0
+        stability_bonus = conn["stability_score"] / 100.0 * STABILITY_BONUS_FACTOR
 
         weighted = signal_w * sig_norm + time_w * eta_norm + stability_bonus * signal_w
 
         # Penalties
-        if conn["drop_segments"] > 3:
-            weighted -= 10
-        if conn["max_drop_probability"] > 0.7:
-            weighted -= 5
-        if conn["single_tower_dependency_segments"] > len(route["path"]) * 0.4:
+        if conn["drop_segments"] > DROP_SEGMENTS_PENALTY_THRESHOLD:
+            weighted -= DROP_SEGMENTS_PENALTY
+        if conn["max_drop_probability"] > MAX_DROP_PROB_PENALTY_THRESHOLD:
+            weighted -= MAX_DROP_PROB_PENALTY
+        if conn["single_tower_dependency_segments"] > len(route["path"]) * SINGLE_TOWER_DEPENDENCY_RATIO:
             weighted -= 5
         # Extra penalty for very low absolute signal
         if conn["avg_connectivity"] < BAD_ZONE_THRESHOLD:
@@ -296,6 +328,18 @@ def rank_routes(
         # Penalty for high signal variance (unstable connection)
         if conn["signal_variance"] > 400:
             weighted -= 5
+
+        # Drops per km penalty: frequent signal drops along the route
+        if conn["drops_per_km"] > DROPS_PER_KM_PENALTY_THRESHOLD:
+            weighted -= DROPS_PER_KM_PENALTY
+        elif conn["drops_per_km"] > 1.0:
+            weighted -= 4
+
+        # MC Dropout uncertainty penalty: down-rank uncertain routes
+        if conn["confidence"] == "low":
+            weighted -= LOW_CONFIDENCE_PENALTY
+        elif conn["confidence"] == "medium" and conn["avg_uncertainty"] > 6.0:
+            weighted -= 3
 
         # Hard reject: ETA too far above fastest
         rejected = route["eta"] > min_eta * max_eta_ratio
@@ -310,6 +354,9 @@ def rank_routes(
             "continuity_score": conn["continuity_score"],
             "signal_variance": conn["signal_variance"],
             "longest_stable_window": conn["longest_stable_window"],
+            "drops_per_km": conn["drops_per_km"],
+            "confidence": conn["confidence"],
+            "avg_uncertainty": conn["avg_uncertainty"],
         }
 
         if msim is not None:

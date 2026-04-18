@@ -51,30 +51,52 @@ export function SearchBar({
   const [geoResults, setGeoResults] = useState<GeocodeSuggestion[]>([]);
   const [isSearching, setIsSearching] = useState(false);
   const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const idleRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const lastSearchLenRef = useRef<number>(0);  // tracks last query length that triggered API
   const containerRef = useRef<HTMLDivElement>(null);
 
   const currentValue = focusedField === "source" ? source : destination;
 
-  // Debounced geocode search triggered on every keystroke (>= 1 char)
+  // Fire the geocode API call
+  const fireGeocode = useCallback(async (query: string) => {
+    setIsSearching(true);
+    try {
+      const results = await geocodeService.search(query);
+      setGeoResults(results);
+      lastSearchLenRef.current = query.trim().length;
+    } catch {
+      // keep stale results on error
+    }
+    setIsSearching(false);
+  }, []);
+
+  // Chunk-based geocode: fire at 3 chars, then every 3 additional chars.
+  // Also fires after 800ms idle regardless of chunk position.
   const triggerGeocode = useCallback((query: string) => {
     if (debounceRef.current) clearTimeout(debounceRef.current);
-    if (query.trim().length < 1) {
+    if (idleRef.current) clearTimeout(idleRef.current);
+    const len = query.trim().length;
+    if (len < 3) {
       setGeoResults([]);
       setIsSearching(false);
+      lastSearchLenRef.current = 0;
       return;
     }
-    setIsSearching(true);
-    // Short debounce (150ms) so suggestions feel instant
-    debounceRef.current = setTimeout(async () => {
-      try {
-        const results = await geocodeService.search(query);
-        setGeoResults(results);
-      } catch {
-        // keep stale results on error
+    // Fire immediately (with small debounce) at chunk boundaries (every 3 chars)
+    const lastLen = lastSearchLenRef.current;
+    const atChunkBoundary = lastLen === 0 || len - lastLen >= 3;
+
+    if (atChunkBoundary) {
+      debounceRef.current = setTimeout(() => fireGeocode(query), 200);
+    }
+
+    // Always set an idle timer -- if user stops typing mid-chunk, fire after 800ms
+    idleRef.current = setTimeout(() => {
+      if (query.trim().length > lastSearchLenRef.current) {
+        fireGeocode(query);
       }
-      setIsSearching(false);
-    }, 150);
-  }, []);
+    }, 800);
+  }, [fireGeocode]);
 
   // Called on every keystroke in either input
   const handleInput = useCallback(
@@ -117,7 +139,7 @@ export function SearchBar({
   const showLocationOption = focusedField === "source" && !source && onUseMyLocation;
   const hasDropdown =
     focusedField !== null &&
-    (showLocationOption || isSearching || geoResults.length > 0 || currentValue.trim().length >= 1);
+    (showLocationOption || isSearching || geoResults.length > 0 || currentValue.trim().length >= 3);
 
   return (
     <div id="search-bar" ref={containerRef} className="absolute top-4 left-4 z-[1100] w-[340px]">
@@ -130,7 +152,7 @@ export function SearchBar({
             placeholder="Enter start location"
             value={source}
             onChange={(e) => handleInput(e.target.value, "source")}
-            onFocus={() => { setFocusedField("source"); triggerGeocode(source); }}
+            onFocus={() => { setFocusedField("source"); lastSearchLenRef.current = 0; triggerGeocode(source); }}
             onBlur={() => setTimeout(() => {
               if (!containerRef.current?.contains(document.activeElement)) {
                 setFocusedField(null);
@@ -158,7 +180,7 @@ export function SearchBar({
             placeholder="Enter stop location"
             value={destination}
             onChange={(e) => handleInput(e.target.value, "dest")}
-            onFocus={() => { setFocusedField("dest"); triggerGeocode(destination); }}
+            onFocus={() => { setFocusedField("dest"); lastSearchLenRef.current = 0; triggerGeocode(destination); }}
             onBlur={() => setTimeout(() => {
               if (!containerRef.current?.contains(document.activeElement)) {
                 setFocusedField(null);

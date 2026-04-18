@@ -12,11 +12,11 @@ import { MapContainer, type HeatmapFilterType } from "@/src/components/map/MapCo
 import { SearchBar } from "@/src/components/search/SearchBar";
 import { RouteSidebar } from "@/src/components/sidebar/RouteSidebar";
 import { useGeolocation } from "@/src/hooks/useGeolocation";
-import { useHeatmap, useReroute, useRoutes, useTowerMarkers } from "@/src/hooks/useMapData";
+import { useFastRoutes, useHeatmap, useReroute, useRoutes, useTowerMarkers } from "@/src/hooks/useMapData";
 import { useNetworkDetect } from "@/src/hooks/useNetworkDetect";
 import { useTracking } from "@/src/hooks/useTracking";
 import { offlineService, geocodeService, reverseGeocodeService, routeService, alertsService } from "@/src/services/api";
-import type { TelecomMode, WeatherInfo, CallDropStats } from "@/src/types/route";
+import type { TelecomMode, WeatherInfo, CallDropStats, RouteOption } from "@/src/types/route";
 
 export default function Home() {
   // Search state -- empty on load
@@ -34,6 +34,9 @@ export default function Home() {
   const [telecom, setTelecom] = useState<TelecomMode>("all");
   const [maxEtaFactor, setMaxEtaFactor] = useState(1.5);
   const [heatmapFilter, setHeatmapFilter] = useState<HeatmapFilterType>("signal");
+
+  // Route intent: "speed" = fastest route, "signal" = best connectivity
+  const [routeIntent, setRouteIntent] = useState<"speed" | "signal">("signal");
 
   // UI state
   const [selectedRouteIndex, setSelectedRouteIndex] = useState(0);
@@ -64,15 +67,45 @@ export default function Home() {
     [hasSearched, snapshotSrc, snapshotDst, preference, telecom, maxEtaFactor, searchTrigger],
   );
 
-  const { data: routeData, isLoading: routesLoading } = useRoutes(
+  // -----------------------------------------------------------------------
+  // Two-phase route loading:
+  //   Phase 1 (fast): TomTom geometry only -- shows routes on map in ~1-2s
+  //   Phase 2 (full): ML signal scoring, dead zones, weather -- enriches UI
+  // -----------------------------------------------------------------------
+  const { data: fastRouteData, isLoading: fastLoading } = useFastRoutes(
+    snapshotSrc, snapshotDst, hasSearched,
+  );
+  const { data: routeData, isLoading: fullLoading } = useRoutes(
     queryParams ?? { source: "", destination: "", preference: 50, telecom: "all" },
   );
   const { data: heatmapData } = useHeatmap();
   const { data: towerMarkersData } = useTowerMarkers();
   const reroute = useReroute();
 
-  const routes = hasSearched ? (routeData?.routes ?? []) : [];
-  const recommendedRoute = routeData?.recommended_route ?? "";
+  // Use full routes if available, otherwise show fast routes (heuristic scoring)
+  const hasFull = !!routeData?.routes?.length;
+  const displayRoutes: RouteOption[] = useMemo(() => {
+    if (!hasSearched) return [];
+    if (hasFull) return routeData.routes;
+    // Convert fast routes to RouteOption shape with heuristic scores
+    if (fastRouteData?.routes?.length) {
+      return fastRouteData.routes.map((r) => ({
+        name: r.name,
+        eta: r.eta,
+        distance: r.distance,
+        path: r.path,
+        signal_score: r.signal_score,
+        weighted_score: r.weighted_score,
+        zones: r.zones ?? [],
+      }));
+    }
+    return [];
+  }, [hasSearched, hasFull, routeData, fastRouteData]);
+
+  const routes = displayRoutes;
+  const recommendedRoute = (hasFull ? routeData?.recommended_route : fastRouteData?.recommended_route) ?? "";
+  const routesLoading = hasSearched && !routes.length && (fastLoading || fullLoading);
+
   const heatmapZones = heatmapData?.zones ?? [];
   const towerMarkers = towerMarkersData ?? [];
 
@@ -400,6 +433,39 @@ export default function Home() {
         geoLoading={geo.loading}
       />
 
+      {/* Route intent quick-pick (below search bar) */}
+      <div className="absolute top-[120px] left-4 z-[1000] flex gap-1 bg-white/95 backdrop-blur rounded-lg shadow-md p-1">
+        <button
+          type="button"
+          onClick={() => { setRouteIntent("speed"); setPreference(10); }}
+          className={`px-3 py-1.5 text-xs font-medium rounded-md transition-colors cursor-pointer ${
+            routeIntent === "speed"
+              ? "bg-blue-500 text-white"
+              : "text-gray-600 hover:bg-gray-100"
+          }`}
+        >
+          Fastest Route
+        </button>
+        <button
+          type="button"
+          onClick={() => { setRouteIntent("signal"); setPreference(80); }}
+          className={`px-3 py-1.5 text-xs font-medium rounded-md transition-colors cursor-pointer ${
+            routeIntent === "signal"
+              ? "bg-blue-500 text-white"
+              : "text-gray-600 hover:bg-gray-100"
+          }`}
+        >
+          Best Signal
+        </button>
+      </div>
+
+      {/* Enriching indicator */}
+      {hasSearched && !hasFull && fullLoading && routes.length > 0 && (
+        <div className="absolute top-[160px] left-4 z-[1000] bg-white/95 backdrop-blur rounded-lg shadow-md px-3 py-2 text-xs text-gray-500 flex items-center gap-2">
+          <span className="inline-block h-2 w-2 rounded-full bg-blue-400 animate-pulse" />
+          Running ML models for precise signal scores...
+        </div>
+      )}
       {/* Filter panel (top-right) */}
       <FilterPanel
         preference={preference}
@@ -439,6 +505,7 @@ export default function Home() {
         onSelect={handleRouteSelect}
         onClose={() => setSidebarOpen(false)}
         visible={sidebarOpen && routes.length > 0}
+        enriching={hasSearched && !hasFull && fullLoading}
       />
 
       {/* Bottom route card */}
