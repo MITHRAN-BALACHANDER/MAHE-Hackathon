@@ -117,33 +117,121 @@ export const offlineService = {
   },
 };
 
-export type GeocodeSuggestion = {
-  city: string;   // full Nominatim display_name
-  lat: number;
-  lon: number;
+// ---------------------------------------------------------------------------
+// Mapbox Search Box (Autocomplete) -- replaces Nominatim geocoding
+// ---------------------------------------------------------------------------
+
+const MAPBOX_TOKEN = process.env.NEXT_PUBLIC_MAPBOX_TOKEN ?? "";
+
+// One session token per search session; reset after retrieve() per Mapbox spec.
+let _mbxSessionToken: string =
+  typeof crypto !== "undefined" ? crypto.randomUUID() : Math.random().toString(36).slice(2);
+
+export type MapboxSuggestion = {
+  name: string;         // short place name, e.g. "Koramangala"
+  full_address: string; // full display address
+  mapbox_id: string;    // opaque ID required for the retrieve step
 };
 
-export const geocodeService = {
-  async search(q: string, limit = 5): Promise<GeocodeSuggestion[]> {
+export const mapboxSearchService = {
+  /** Step 1 – return autocomplete suggestions (no coordinates yet). */
+  async suggest(
+    q: string,
+    proximity?: { lat: number; lng: number },
+  ): Promise<MapboxSuggestion[]> {
     if (!q || q.trim().length < 2) return [];
+    const params = new URLSearchParams({
+      q: q.trim(),
+      access_token: MAPBOX_TOKEN,
+      session_token: _mbxSessionToken,
+      country: "in",
+      language: "en",
+      limit: "5",
+    });
+    if (proximity) params.set("proximity", `${proximity.lng},${proximity.lat}`);
     try {
-      const { data } = await client.get<GeocodeSuggestion[]>("/api/geocode", {
-        params: { q: q.trim(), limit },
-      });
-      return data;
+      const resp = await fetch(
+        `https://api.mapbox.com/search/searchbox/v1/suggest?${params}`,
+      );
+      if (!resp.ok) return [];
+      const data = await resp.json() as {
+        suggestions?: Array<{
+          name: string;
+          full_address?: string;
+          place_formatted?: string;
+          mapbox_id: string;
+        }>;
+      };
+      return (data.suggestions ?? []).map((s) => ({
+        name: s.name,
+        full_address: s.full_address ?? s.place_formatted ?? s.name,
+        mapbox_id: s.mapbox_id,
+      }));
     } catch {
       return [];
     }
   },
-};
 
-export const reverseGeocodeService = {
-  async lookup(lat: number, lon: number): Promise<GeocodeSuggestion | null> {
+  /** Step 2 – resolve a suggestion to exact coordinates. Resets session token. */
+  async retrieve(
+    mapboxId: string,
+  ): Promise<{ name: string; lat: number; lng: number } | null> {
+    const params = new URLSearchParams({
+      access_token: MAPBOX_TOKEN,
+      session_token: _mbxSessionToken,
+    });
     try {
-      const { data } = await client.get<GeocodeSuggestion>("/api/reverse-geocode", {
-        params: { lat, lon },
-      });
-      return data;
+      const resp = await fetch(
+        `https://api.mapbox.com/search/searchbox/v1/retrieve/${encodeURIComponent(mapboxId)}?${params}`,
+      );
+      if (!resp.ok) return null;
+      const data = await resp.json() as {
+        features?: Array<{
+          geometry: { coordinates: [number, number] };
+          properties?: { name?: string; full_address?: string };
+        }>;
+      };
+      // Reset session token after a successful retrieve (Mapbox billing spec)
+      _mbxSessionToken =
+        typeof crypto !== "undefined" ? crypto.randomUUID() : Math.random().toString(36).slice(2);
+      const feature = data.features?.[0];
+      if (!feature) return null;
+      const [lng, lat] = feature.geometry.coordinates;
+      return {
+        name: feature.properties?.name ?? feature.properties?.full_address ?? "",
+        lat,
+        lng,
+      };
+    } catch {
+      return null;
+    }
+  },
+
+  /** Reverse-geocode lat/lng to a short human-readable place name. */
+  async reverseGeocode(lat: number, lng: number): Promise<string | null> {
+    const params = new URLSearchParams({
+      access_token: MAPBOX_TOKEN,
+      types: "place,neighborhood,address",
+      limit: "1",
+    });
+    try {
+      const resp = await fetch(
+        `https://api.mapbox.com/geocoding/v5/mapbox.places/${lng},${lat}.json?${params}`,
+      );
+      if (!resp.ok) return null;
+      const data = await resp.json() as {
+        features?: Array<{
+          text: string;
+          context?: Array<{ id: string; text: string }>;
+        }>;
+      };
+      const feature = data.features?.[0];
+      if (!feature) return null;
+      const placeName = feature.text;
+      const ctxPart = feature.context?.find(
+        (c) => c.id.startsWith("place") || c.id.startsWith("district"),
+      )?.text;
+      return ctxPart ? `${placeName}, ${ctxPart}` : placeName;
     } catch {
       return null;
     }

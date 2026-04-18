@@ -15,7 +15,7 @@ import { useGeolocation } from "@/src/hooks/useGeolocation";
 import { useFastRoutes, useHeatmap, useReroute, useRoutes, useTowerMarkers } from "@/src/hooks/useMapData";
 import { useNetworkDetect } from "@/src/hooks/useNetworkDetect";
 import { useTracking } from "@/src/hooks/useTracking";
-import { offlineService, geocodeService, reverseGeocodeService, routeService, alertsService } from "@/src/services/api";
+import { offlineService, mapboxSearchService, routeService, alertsService } from "@/src/services/api";
 import type { TelecomMode, WeatherInfo, CallDropStats, RouteOption } from "@/src/types/route";
 
 export default function Home() {
@@ -278,16 +278,15 @@ export default function Home() {
     : reroute.data ? ("reroute" as const)
     : ("info" as const);
 
-  // When geolocation resolves, reverse-geocode GPS coords to a readable name via Nominatim
+  // When geolocation resolves, reverse-geocode GPS coords to a readable name via Mapbox
   useEffect(() => {
     if (geo.location && !source) {
       const { lat, lng } = geo.location;
-      reverseGeocodeService
-        .lookup(lat, lng)
-        .then((result) => {
-          if (result) {
-            const short = result.city.split(",").slice(0, 2).join(",").trim();
-            setSource(short);
+      mapboxSearchService
+        .reverseGeocode(lat, lng)
+        .then((name) => {
+          if (name) {
+            setSource(name);
             setSourceCoords({ lat, lng });
           }
         })
@@ -379,17 +378,13 @@ export default function Home() {
       if (type === "source") {
         setSourceCoords({ lat, lng });
         // Reverse geocode to get name
-        geocodeService.search(`${lat},${lng}`, 1).then((results) => {
-          if (results.length > 0) {
-            setSource(results[0].city.split(",").slice(0, 2).join(",").trim());
-          }
+        mapboxSearchService.reverseGeocode(lat, lng).then((name) => {
+          if (name) setSource(name);
         }).catch(() => {});
       } else {
         setDestCoords({ lat, lng });
-        geocodeService.search(`${lat},${lng}`, 1).then((results) => {
-          if (results.length > 0) {
-            setDestination(results[0].city.split(",").slice(0, 2).join(",").trim());
-          }
+        mapboxSearchService.reverseGeocode(lat, lng).then((name) => {
+          if (name) setDestination(name);
         }).catch(() => {});
       }
       // Re-trigger route search after short delay

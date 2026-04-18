@@ -1,13 +1,15 @@
 import { render, screen, fireEvent, waitFor } from "@testing-library/react";
 import { SearchBar } from "../SearchBar";
 
-// Mock the geocode service
+// Mock the Mapbox search service
 jest.mock("@/src/services/api", () => ({
-  geocodeService: {
-    search: jest.fn().mockResolvedValue([
-      { city: "Koramangala, Bangalore, Karnataka", lat: 12.9352, lon: 77.6245 },
-      { city: "Koramangala 4th Block, Bangalore", lat: 12.9340, lon: 77.6200 },
+  mapboxSearchService: {
+    suggest: jest.fn().mockResolvedValue([
+      { name: "Koramangala", full_address: "Koramangala, Bengaluru, Karnataka, India", mapbox_id: "id1" },
+      { name: "Koramangala 4th Block", full_address: "Koramangala 4th Block, Bengaluru, Karnataka, India", mapbox_id: "id2" },
     ]),
+    retrieve: jest.fn().mockResolvedValue({ name: "Koramangala", lat: 12.9352, lng: 77.6245 }),
+    reverseGeocode: jest.fn().mockResolvedValue("Koramangala, Bengaluru"),
   },
 }));
 
@@ -83,16 +85,15 @@ describe("SearchBar", () => {
     expect(onSourceCoords).toHaveBeenCalledWith(null, null);
   });
 
-  it("shows geocode suggestions on focus with text >= 1 char", async () => {
-    render(<SearchBar {...defaultProps} source="K" />);
+  it("shows autocomplete suggestions on focus with text >= 2 chars", async () => {
+    render(<SearchBar {...defaultProps} source="Ko" />);
     const input = screen.getByPlaceholderText("Enter start location");
     fireEvent.focus(input);
 
     await waitFor(() => {
-      // Dropdown should appear
-      const dropdown = screen.queryByText(/Searching locations.../);
-      // Either searching or results shown
-      expect(dropdown || screen.queryByText(/Koramangala/)).toBeTruthy();
+      // Dropdown should appear with suggestion or searching indicator
+      const searching = screen.queryByText(/Searching.../);
+      expect(searching || screen.queryByText(/Koramangala/)).toBeTruthy();
     }, { timeout: 1000 });
   });
 
@@ -104,6 +105,6 @@ describe("SearchBar", () => {
     const input = screen.getByPlaceholderText("Enter start location");
     fireEvent.focus(input);
 
-    expect(screen.getByText("Your location")).toBeInTheDocument();
+    expect(screen.getByText("Use my location")).toBeInTheDocument();
   });
 });

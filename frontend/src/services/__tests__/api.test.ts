@@ -1,4 +1,4 @@
-import { routeService, heatmapService, geocodeService, offlineService } from "../api";
+import { routeService, heatmapService, mapboxSearchService, offlineService } from "../api";
 import axios from "axios";
 
 jest.mock("axios", () => ({
@@ -40,19 +40,21 @@ describe("API Services", () => {
     });
   });
 
-  describe("geocodeService", () => {
-    it("has search method", () => {
-      expect(geocodeService).toBeDefined();
-      expect(geocodeService.search).toBeDefined();
+  describe("mapboxSearchService", () => {
+    it("has suggest and retrieve methods", () => {
+      expect(mapboxSearchService).toBeDefined();
+      expect(mapboxSearchService.suggest).toBeDefined();
+      expect(mapboxSearchService.retrieve).toBeDefined();
+      expect(mapboxSearchService.reverseGeocode).toBeDefined();
     });
 
     it("returns empty array for short queries", async () => {
-      const results = await geocodeService.search("");
+      const results = await mapboxSearchService.suggest("");
       expect(results).toEqual([]);
     });
 
     it("returns empty array for single char", async () => {
-      const results = await geocodeService.search("a");
+      const results = await mapboxSearchService.suggest("a");
       expect(results).toEqual([]);
     });
   });
