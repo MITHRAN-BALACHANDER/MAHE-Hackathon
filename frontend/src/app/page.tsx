@@ -13,6 +13,7 @@ import { useGeolocation } from "@/src/hooks/useGeolocation";
 import { useHeatmap, useReroute, useRoutes } from "@/src/hooks/useMapData";
 import { useNetworkDetect } from "@/src/hooks/useNetworkDetect";
 import { useTracking } from "@/src/hooks/useTracking";
+import { offlineService } from "@/src/services/api";
 import type { TelecomMode } from "@/src/types/route";
 
 export default function Home() {
@@ -25,12 +26,14 @@ export default function Home() {
   // Filter state
   const [preference, setPreference] = useState(50);
   const [telecom, setTelecom] = useState<TelecomMode>("all");
+  const [maxEtaFactor, setMaxEtaFactor] = useState(1.5);
 
   // UI state
   const [selectedRouteIndex, setSelectedRouteIndex] = useState(0);
   const [sidebarOpen, setSidebarOpen] = useState(true);
   const [trackingActive, setTrackingActive] = useState(false);
   const [suggestedRoute, setSuggestedRoute] = useState<string>("");
+  const [offlineReady, setOfflineReady] = useState(false);
 
   // Geolocation
   const geo = useGeolocation();
@@ -42,10 +45,10 @@ export default function Home() {
   const queryParams = useMemo(
     () =>
       hasSearched && source && destination
-        ? { source, destination, preference, telecom }
+        ? { source, destination, preference, telecom, max_eta_factor: maxEtaFactor }
         : null,
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [source, destination, preference, telecom, searchTrigger, hasSearched],
+    [source, destination, preference, telecom, maxEtaFactor, searchTrigger, hasSearched],
   );
 
   const { data: routeData, isLoading: routesLoading } = useRoutes(
@@ -64,8 +67,9 @@ export default function Home() {
 
   const etaDisplay = selectedRoute ? `${selectedRoute.eta} min` : "--";
 
-  // Toast message
-  const toastMessage = reroute.data?.advisory ?? null;
+  // Toast message: reroute advisory OR bad zone warning
+  const badZoneWarning = selectedRoute?.bad_zones?.[0]?.warning ?? null;
+  const toastMessage = reroute.data?.advisory ?? badZoneWarning;
   const toastType = reroute.data ? ("reroute" as const) : ("info" as const);
 
   // When geolocation resolves, reverse-geocode to a readable name
@@ -165,6 +169,19 @@ export default function Home() {
     [],
   );
 
+  const handleDownloadOffline = useCallback(async () => {
+    if (!source || !destination) return;
+    try {
+      const bundle = await offlineService.downloadBundle(
+        source, destination, preference, telecom,
+      );
+      offlineService.saveToStorage(bundle);
+      setOfflineReady(true);
+    } catch {
+      // Silently fail -- user can retry
+    }
+  }, [source, destination, preference, telecom]);
+
   return (
     <div className="relative h-screen w-screen overflow-hidden bg-white">
       {/* Full-screen map */}
@@ -196,6 +213,10 @@ export default function Home() {
         onTelecomChange={setTelecom}
         onChatApply={handleChatApply}
         detectedNetwork={networkInfo.type}
+        maxEtaFactor={maxEtaFactor}
+        onMaxEtaFactorChange={setMaxEtaFactor}
+        onDownloadOffline={hasSearched ? handleDownloadOffline : undefined}
+        offlineReady={offlineReady}
       />
 
       {/* Route sidebar (left) */}

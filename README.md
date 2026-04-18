@@ -50,6 +50,13 @@ The user adjusts a preference slider (0 = pure speed, 100 = pure signal) and the
 - **Dead zone alerts** -- Toast notifications when approaching weak signal areas
 - **Live rerouting** -- Smart reroute button triggers re-scoring from current position
 
+### Advanced Optimization
+- **Multi-SIM scoring** -- Scores every route across all carriers (Jio, Airtel, Vi, BSNL), picks best per segment, returns per-carrier breakdown and combined best-of-all score
+- **Signal stability metrics** -- Continuity score (signal standard deviation), longest stable window (consecutive strong segments), and combined stability score (50% continuity + 50% stable fraction)
+- **Hard ETA constraints** -- Configurable max ETA ratio (default 1.5x fastest). Routes exceeding the cap are marked `rejected` and shown with a "Too Slow" badge. Slider in UI from 0 (no limit) to 3x
+- **Predictive bad zone warnings** -- Detects upcoming dead zones with estimated time-to-zone, zone duration, and minimum signal. Displayed in sidebar with edge zone names (tunnels, underpasses)
+- **Offline bundle** -- `/api/offline-bundle` endpoint returns full route data, bad zones, segment signals, and heatmap snapshot. Frontend saves to localStorage for offline access
+
 ### AI / ML
 - **Signal prediction model** -- ResidualSignalNet (PyTorch) with 17-feature input, trained on Bangalore tower data
 - **Thompson Sampling RL** -- Per-user Beta-Bernoulli bandit learns signal vs speed preference over time
@@ -162,7 +169,7 @@ signalroute-ai/
 |   |-- scripts/
 |   |   |-- seed_db.py          # Database seeding script
 |   |-- tests/
-|       |-- test_routes.py      # 39 tests (scoring, signal, RL, API, utils)
+|       |-- test_routes.py      # 43 tests (scoring, stability, signal, RL, API, utils)
 |
 |-- model/                      # ML signal prediction model
 |   |-- main.py                 # FastAPI app with /model/* endpoints
@@ -245,6 +252,7 @@ signalroute-ai/
 | GET | `/api/predict` | Predict future signal for a zone |
 | POST | `/api/reroute` | Smart reroute from current position |
 | GET | `/api/towers` | Cell tower infrastructure summary |
+| GET | `/api/offline-bundle` | Full route + heatmap bundle for offline use |
 
 ### ML Model API (`/model/*`)
 
@@ -270,7 +278,8 @@ Full API documentation: [docs/API.md](docs/API.md)
 ### Route Ranking Formula
 
 ```
-final_score = weight * (signal_score / 100) + (1 - weight) * eta_score
+final_score = weight * (signal_score / 100) + (1 - weight) * eta_score + stability_bonus
+stability_bonus = (stability_score / 100) * 0.1 * weight
 ```
 
 | Variable | Range | Description |
@@ -278,6 +287,8 @@ final_score = weight * (signal_score / 100) + (1 - weight) * eta_score
 | `weight` | 0.0 - 1.0 | User preference (slider: 0 = speed, 1 = signal) |
 | `signal_score` | 0 - 100 | Average predicted signal strength along route |
 | `eta_score` | 0.0 - 1.0 | Normalized ETA (1 = fastest candidate, 0 = slowest) |
+| `stability_score` | 0 - 100 | Combined continuity + longest-stable-fraction metric |
+| `stability_bonus` | 0 - 0.1 | Up to 10% boost for stable signal routes (scales with weight) |
 
 ### RL Personalization (Thompson Sampling)
 

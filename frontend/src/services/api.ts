@@ -2,6 +2,7 @@ import axios from "axios";
 
 import type {
   HeatmapResponse,
+  OfflineBundle,
   PredictionResponse,
   RerouteRequest,
   RerouteResponse,
@@ -49,5 +50,44 @@ export const towerService = {
   async getTowers(): Promise<TowerSummary> {
     const { data } = await client.get<TowerSummary>("/api/towers");
     return data;
+  },
+};
+
+export const offlineService = {
+  async downloadBundle(
+    source: string,
+    destination: string,
+    preference = 50,
+    telecom = "all",
+  ): Promise<OfflineBundle> {
+    const { data } = await client.get<OfflineBundle>("/api/offline-bundle", {
+      params: { source, destination, preference, telecom },
+    });
+    return data;
+  },
+
+  saveToStorage(bundle: OfflineBundle): void {
+    const key = `offline_${bundle.source}_${bundle.destination}`;
+    localStorage.setItem(key, JSON.stringify(bundle));
+  },
+
+  loadFromStorage(source: string, destination: string): OfflineBundle | null {
+    const key = `offline_${source}_${destination}`;
+    const raw = localStorage.getItem(key);
+    if (!raw) return null;
+    try {
+      return JSON.parse(raw) as OfflineBundle;
+    } catch {
+      return null;
+    }
+  },
+
+  listSavedBundles(): string[] {
+    const keys: string[] = [];
+    for (let i = 0; i < localStorage.length; i++) {
+      const key = localStorage.key(i);
+      if (key?.startsWith("offline_")) keys.push(key);
+    }
+    return keys;
   },
 };
