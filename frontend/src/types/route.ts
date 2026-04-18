@@ -75,6 +75,20 @@ export type HeatmapResponse = {
   zones: HeatmapZone[];
 };
 
+export type TowerMarker = {
+  tower_id: string;
+  lat: number;
+  lng: number;
+  operator: string;
+  signal_score: number;
+  zone?: string;
+};
+
+export type TowerMarkersResponse = {
+  towers: TowerMarker[];
+  count: number;
+};
+
 export type PredictionResponse = {
   zone: string;
   horizon_minutes: number;

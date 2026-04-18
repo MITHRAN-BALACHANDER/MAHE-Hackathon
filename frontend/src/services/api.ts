@@ -9,6 +9,8 @@ import type {
   RouteQueryParams,
   RoutesResponse,
   TowerSummary,
+  TowerMarker,
+  TowerMarkersResponse,
 } from "@/src/types/route";
 
 const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8001";
@@ -50,6 +52,15 @@ export const towerService = {
   async getTowers(): Promise<TowerSummary> {
     const { data } = await client.get<TowerSummary>("/api/towers");
     return data;
+  },
+};
+
+export const towerGeoService = {
+  async fetchAll(maxTowers = 300): Promise<TowerMarker[]> {
+    const { data } = await client.get<TowerMarkersResponse>("/api/towers/geo", {
+      params: { max_towers: maxTowers },
+    });
+    return data.towers ?? [];
   },
 };
 

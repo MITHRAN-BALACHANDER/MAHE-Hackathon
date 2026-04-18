@@ -791,6 +791,48 @@ def api_towers():
 
 
 # -----------------------------------------------------------------------
+# GET /api/towers/geo  (individual tower lat/lng for map rendering)
+# -----------------------------------------------------------------------
+
+@app.get("/api/towers/geo")
+def api_towers_geo(
+    max_towers: int = Query(300, ge=1, le=1000, description="Max individual towers to return"),
+    operator: str = Query("all", max_length=20, description="Filter by operator (jio/airtel/vi/all)"),
+):
+    """Return individual tower positions for map rendering.
+
+    Returns real lat/lng from OpenCelliD (or synthetic) data so the
+    frontend can place tower icons at their actual geographic positions.
+    """
+    towers_df = _get_towers()
+    if towers_df.empty:
+        return {"towers": [], "count": 0}
+
+    df = towers_df.copy()
+
+    # Optional operator filter
+    if operator.lower() != "all" and "operator" in df.columns:
+        df = df[df["operator"].str.lower() == operator.lower()]
+
+    # Sample down to max_towers keeping geographic spread (random with fixed seed)
+    if len(df) > max_towers:
+        df = df.sample(n=max_towers, random_state=42)
+
+    # Return only the columns the map needs
+    needed = ["tower_id", "lat", "lng", "operator", "signal_score", "zone"]
+    available = [c for c in needed if c in df.columns]
+    records = df[available].to_dict("records")
+
+    # Ensure numeric types are plain Python floats/ints for JSON serialisation
+    for r in records:
+        r["lat"] = float(r["lat"])
+        r["lng"] = float(r["lng"])
+        r["signal_score"] = float(r.get("signal_score", 50))
+
+    return {"towers": records, "count": len(records)}
+
+
+# -----------------------------------------------------------------------
 # PUT /model/refresh-towers  (fetch fresh data from OpenCelliD)
 # -----------------------------------------------------------------------
 

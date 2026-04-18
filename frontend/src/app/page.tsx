@@ -11,7 +11,7 @@ import { MapContainer, type HeatmapFilterType } from "@/src/components/map/MapCo
 import { SearchBar } from "@/src/components/search/SearchBar";
 import { RouteSidebar } from "@/src/components/sidebar/RouteSidebar";
 import { useGeolocation } from "@/src/hooks/useGeolocation";
-import { useHeatmap, useReroute, useRoutes } from "@/src/hooks/useMapData";
+import { useHeatmap, useReroute, useRoutes, useTowerMarkers } from "@/src/hooks/useMapData";
 import { useNetworkDetect } from "@/src/hooks/useNetworkDetect";
 import { useTracking } from "@/src/hooks/useTracking";
 import { offlineService, geocodeService, reverseGeocodeService } from "@/src/services/api";
@@ -64,11 +64,13 @@ export default function Home() {
     queryParams ?? { source: "", destination: "", preference: 50, telecom: "all" },
   );
   const { data: heatmapData } = useHeatmap();
+  const { data: towerMarkersData } = useTowerMarkers();
   const reroute = useReroute();
 
   const routes = hasSearched ? (routeData?.routes ?? []) : [];
   const recommendedRoute = routeData?.recommended_route ?? "";
   const heatmapZones = heatmapData?.zones ?? [];
+  const towerMarkers = towerMarkersData ?? [];
 
   const selectedRoute = routes[selectedRouteIndex] ?? routes[0];
   const trackingPath = selectedRoute?.path ?? [];
@@ -91,7 +93,7 @@ export default function Home() {
           if (result) {
             const short = result.city.split(",").slice(0, 2).join(",").trim();
             setSource(short);
-            setSourceCoords({ lat: result.lat, lng: result.lon });
+            setSourceCoords({ lat, lng });
           }
         })
         .catch(() => {/* silently ignore */});
@@ -211,6 +213,7 @@ export default function Home() {
         routes={routes}
         selectedRouteIndex={selectedRouteIndex}
         heatmapZones={heatmapZones}
+        towerMarkers={towerMarkers}
         onRouteClick={handleRouteSelect}
         trackingPosition={trackingPosition}
         userLocation={geo.location}

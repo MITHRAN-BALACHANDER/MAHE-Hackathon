@@ -3,7 +3,7 @@
 import { useEffect, useRef, useState, useCallback } from "react";
 import L from "leaflet";
 import "leaflet/dist/leaflet.css";
-import type { Coordinate, HeatmapZone, RouteOption } from "@/src/types/route";
+import type { Coordinate, HeatmapZone, RouteOption, TowerMarker } from "@/src/types/route";
 
 const BANGALORE_CENTER: L.LatLngExpression = [12.9716, 77.5946];
 const DEFAULT_ZOOM = 12;
@@ -110,10 +110,37 @@ function createUserIcon(): L.DivIcon {
   });
 }
 
+const OPERATOR_COLORS: Record<string, string> = {
+  Jio: "#0070f3",
+  Airtel: "#e53e3e",
+  Vi: "#d69e2e",
+  BSNL: "#38a169",
+};
+
+function createTowerDotIcon(tower: TowerMarker): L.DivIcon {
+  const color = OPERATOR_COLORS[tower.operator] ?? "#6b7280";
+  const size = tower.signal_score >= 70 ? 8 : tower.signal_score >= 40 ? 7 : 6;
+  const opacity = tower.signal_score >= 70 ? 0.9 : tower.signal_score >= 40 ? 0.75 : 0.6;
+  return L.divIcon({
+    className: "",
+    html: `<div style="
+      width:${size}px;height:${size}px;
+      background:${color};
+      border:1.5px solid rgba(255,255,255,0.8);
+      border-radius:50%;
+      opacity:${opacity};
+      box-shadow:0 1px 3px rgba(0,0,0,.25);
+    "></div>`,
+    iconSize: [size, size],
+    iconAnchor: [size / 2, size / 2],
+  });
+}
+
 type Props = {
   routes: RouteOption[];
   selectedRouteIndex: number;
   heatmapZones: HeatmapZone[];
+  towerMarkers?: TowerMarker[];
   onRouteClick?: (index: number) => void;
   trackingPosition?: Coordinate | null;
   userLocation?: Coordinate | null;
@@ -125,6 +152,7 @@ export default function MapView({
   routes,
   selectedRouteIndex,
   heatmapZones,
+  towerMarkers,
   onRouteClick,
   trackingPosition,
   userLocation,
@@ -135,6 +163,7 @@ export default function MapView({
   const mapRef = useRef<L.Map | null>(null);
   const routeLayersRef = useRef<L.Polyline[]>([]);
   const zoneLayerRef = useRef<L.LayerGroup | null>(null);
+  const towerLayerRef = useRef<L.LayerGroup | null>(null);
   const markerRef = useRef<L.Marker | null>(null);
   const userLocMarkerRef = useRef<L.Marker | null>(null);
   const pinLayerRef = useRef<L.LayerGroup | null>(null);
@@ -315,6 +344,31 @@ export default function MapView({
       zoneLayerRef.current!.addLayer(marker);
     });
   }, [mapReady, heatmapZones, heatmapFilter]);
+
+  // Draw individual tower dots at real OpenCelliD lat/lng
+  useEffect(() => {
+    if (!mapReady || !mapRef.current) return;
+    const map = mapRef.current;
+
+    if (towerLayerRef.current) {
+      towerLayerRef.current.clearLayers();
+    } else {
+      towerLayerRef.current = L.layerGroup().addTo(map);
+    }
+
+    if (!towerMarkers || towerMarkers.length === 0) return;
+
+    towerMarkers.forEach((tower) => {
+      const icon = createTowerDotIcon(tower);
+      const marker = L.marker([tower.lat, tower.lng], { icon, interactive: true });
+      const signalLabel = tower.signal_score >= 70 ? "Strong" : tower.signal_score >= 40 ? "Medium" : "Weak";
+      marker.bindTooltip(
+        `<b>${tower.operator}</b>${tower.zone ? ` — ${tower.zone}` : ""}<br/>Signal: ${signalLabel} (${Math.round(tower.signal_score)})<br/><span style="font-size:10px;color:#9ca3af;">${tower.tower_id}</span>`,
+        { direction: "top", className: "zone-tooltip" },
+      );
+      towerLayerRef.current!.addLayer(marker);
+    });
+  }, [mapReady, towerMarkers]);
 
   // Live tracking marker
   useEffect(() => {

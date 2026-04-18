@@ -1,7 +1,7 @@
 "use client";
 
 import dynamic from "next/dynamic";
-import type { Coordinate, HeatmapZone, RouteOption } from "@/src/types/route";
+import type { Coordinate, HeatmapZone, RouteOption, TowerMarker } from "@/src/types/route";
 import type { HeatmapFilterType } from "./MapView";
 
 const MapView = dynamic(() => import("./MapView"), {
@@ -18,6 +18,7 @@ type Props = {
   routes: RouteOption[];
   selectedRouteIndex: number;
   heatmapZones: HeatmapZone[];
+  towerMarkers?: TowerMarker[];
   onRouteClick?: (index: number) => void;
   trackingPosition?: Coordinate | null;
   userLocation?: Coordinate | null;
