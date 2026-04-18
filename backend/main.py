@@ -22,7 +22,7 @@ from dotenv import load_dotenv
 load_dotenv(Path(__file__).resolve().parent.parent / ".env")
 
 import pandas as pd
-from fastapi import FastAPI, Query
+from fastapi import FastAPI, HTTPException, Query
 from pydantic import BaseModel
 
 # Import the existing FastAPI app (has all PUT /model/* endpoints + CORS)
@@ -51,6 +51,7 @@ from model.schemas import (
     RLInfo, PatternInfo,
 )
 from backend.routing.tomtom_client import TomTomClient
+from backend.routing.geocode import geocode_query
 
 # Update app metadata for the full backend
 app.title = "SignalRoute Backend"
@@ -109,14 +110,27 @@ LOCATIONS: dict[str, tuple[float, float]] = {
 
 
 def _resolve_location(name: str) -> tuple[float, float]:
-    """Resolve a place name to (lat, lng). Falls back to zone lookup."""
+    """Resolve a place name or @lat,lng string to (lat, lng) coordinates.
+
+    Supports three formats:
+    - ``"@lat,lng"`` -- geocoded coordinate pair from the frontend
+    - Known place name in LOCATIONS dict (e.g. ``"MG Road"``)
+    - Zone name substring match (fallback)
+    """
+    # Geocoded coordinate format passed from frontend: "@12.9172,77.6225"
+    if name.startswith("@"):
+        try:
+            lat_s, lng_s = name[1:].split(",", 1)
+            return (float(lat_s), float(lng_s))
+        except (ValueError, IndexError):
+            pass
     key = name.lower().strip()
     if key in LOCATIONS:
         return LOCATIONS[key]
     for zone_name, info in ZONES.items():
         if key in zone_name.lower():
             return info["center"]
-    return (12.9172, 77.6225)  # default: Silk Board
+    return (12.9172, 77.6225)  # default: MIT MAHE
 
 
 # -----------------------------------------------------------------------
@@ -519,6 +533,36 @@ async def api_reroute(body: _RerouteBody):
 # =======================================================================
 # TOWER DATA ENDPOINTS  (GET/PUT  --  /api/towers, /model/refresh-towers)
 # =======================================================================
+
+# -----------------------------------------------------------------------
+# GET /api/geocode  (location name -> lat/lon via Nominatim)
+# -----------------------------------------------------------------------
+
+@app.get("/api/geocode")
+async def api_geocode(
+    q: str = Query("", description="Free-form location query, e.g. 'MIT Bangalore'"),
+    limit: int = Query(5, ge=1, le=10, description="Max results to return"),
+):
+    """Convert a location name to lat/lon using OpenStreetMap Nominatim.
+
+    Supports any free-form query such as ``"MIT Bangalore"``, ``"Koramangala"``,
+    or ``"Electronic City, Bengaluru"``. Results are cached in-memory.
+
+    Returns a list of matching locations, each with:
+    - ``city``: full display name from Nominatim
+    - ``lat``: latitude
+    - ``lon``: longitude
+    """
+    if not q or not q.strip():
+        raise HTTPException(status_code=400, detail="Query parameter 'q' is required")
+
+    results = await geocode_query(q.strip(), limit=limit)
+
+    if not results:
+        raise HTTPException(status_code=404, detail=f"No results found for '{q}'")
+
+    return results
+
 
 # -----------------------------------------------------------------------
 # GET /api/towers  (current tower data summary)

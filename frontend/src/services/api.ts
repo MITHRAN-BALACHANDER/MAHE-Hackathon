@@ -91,3 +91,24 @@ export const offlineService = {
     return keys;
   },
 };
+
+export type GeocodeSuggestion = {
+  city: string;   // full Nominatim display_name
+  lat: number;
+  lon: number;
+};
+
+export const geocodeService = {
+  async search(q: string, limit = 5): Promise<GeocodeSuggestion[]> {
+    if (!q || q.trim().length < 2) return [];
+    try {
+      const { data } = await client.get<GeocodeSuggestion[]>("/api/geocode", {
+        params: { q: q.trim(), limit },
+      });
+      return data;
+    } catch {
+      return [];
+    }
+  },
+};
+

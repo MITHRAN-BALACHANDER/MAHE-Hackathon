@@ -1,10 +1,12 @@
 "use client";
 
-import { MapPin, Search, X } from "lucide-react";
-import { useCallback, useState } from "react";
+import { Loader2, MapPin, Search, X } from "lucide-react";
+import { useCallback, useRef, useState } from "react";
 
-const LOCATIONS = [
-  "Koramangala", "Indiranagar", "Whitefield",
+import { geocodeService, type GeocodeSuggestion } from "@/src/services/api";
+
+const QUICK_LOCATIONS = [
+  "MIT", "Airport", "Koramangala", "Indiranagar", "Whitefield",
   "Electronic City", "MG Road", "Jayanagar", "HSR Layout", "Hebbal",
   "Marathahalli", "BTM Layout", "Rajajinagar", "Silk Board", "Peenya",
   "Yelahanka", "Bannerghatta", "KR Puram", "Sarjapur Road", "Hosur Road",
@@ -16,46 +18,115 @@ type Props = {
   destination: string;
   onSourceChange: (v: string) => void;
   onDestinationChange: (v: string) => void;
+  onSourceCoords?: (lat: number | null, lon: number | null) => void;
+  onDestCoords?: (lat: number | null, lon: number | null) => void;
   onSearch: () => void;
   onUseMyLocation?: () => void;
   geoLoading?: boolean;
 };
+
+/** Shorten a Nominatim display_name to the first 2 comma parts. */
+function shortenName(displayName: string): string {
+  return displayName.split(",").slice(0, 2).join(",").trim();
+}
 
 export function SearchBar({
   source,
   destination,
   onSourceChange,
   onDestinationChange,
+  onSourceCoords,
+  onDestCoords,
   onSearch,
   onUseMyLocation,
   geoLoading,
 }: Props) {
   const [focusedField, setFocusedField] = useState<"source" | "dest" | null>(null);
+  const [geoResults, setGeoResults] = useState<GeocodeSuggestion[]>([]);
+  const [isSearching, setIsSearching] = useState(false);
+  const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const currentValue = focusedField === "source" ? source : destination;
-  const onChange = focusedField === "source" ? onSourceChange : onDestinationChange;
 
-  const filtered = LOCATIONS.filter(
-    (l) =>
-      l.toLowerCase().includes((currentValue ?? "").toLowerCase()) &&
-      l !== (focusedField === "source" ? destination : source),
-  );
+  // Debounced geocode search triggered on every keystroke (>= 2 chars)
+  const triggerGeocode = useCallback((query: string) => {
+    setGeoResults([]);
+    if (debounceRef.current) clearTimeout(debounceRef.current);
+    if (query.trim().length < 2) {
+      setIsSearching(false);
+      return;
+    }
+    setIsSearching(true);
+    debounceRef.current = setTimeout(async () => {
+      const results = await geocodeService.search(query);
+      setGeoResults(results);
+      setIsSearching(false);
+    }, 350);
+  }, []);
 
-  const handleSelect = useCallback(
-    (loc: string) => {
-      onChange(loc);
-      setFocusedField(null);
-      // Auto-search when both fields are filled
-      const otherField = focusedField === "source" ? destination : source;
-      if (otherField) {
-        setTimeout(() => onSearch(), 100);
+  // Called on every keystroke in either input
+  const handleInput = useCallback(
+    (value: string, field: "source" | "dest") => {
+      if (field === "source") {
+        onSourceChange(value);
+        onSourceCoords?.(null, null); // clear geocoded coords when typing manually
+      } else {
+        onDestinationChange(value);
+        onDestCoords?.(null, null);
       }
+      triggerGeocode(value);
     },
-    [onChange, focusedField, source, destination, onSearch],
+    [onSourceChange, onDestinationChange, onSourceCoords, onDestCoords, triggerGeocode],
   );
 
-  // Show "Your location" option only in source field when input is empty
-  const showLocationOption = focusedField === "source" && !currentValue && onUseMyLocation;
+  // Select a static preset (no coords needed — backend knows these names)
+  const handleStaticSelect = useCallback(
+    (loc: string) => {
+      if (focusedField === "source") onSourceChange(loc);
+      else onDestinationChange(loc);
+      setGeoResults([]);
+      setFocusedField(null);
+      const other = focusedField === "source" ? destination : source;
+      if (other) setTimeout(onSearch, 100);
+    },
+    [focusedField, source, destination, onSourceChange, onDestinationChange, onSearch],
+  );
+
+  // Select a geocoded result — passes lat/lon to parent for @lat,lng routing
+  const handleGeoSelect = useCallback(
+    (sug: GeocodeSuggestion) => {
+      const label = shortenName(sug.city);
+      if (focusedField === "source") {
+        onSourceChange(label);
+        onSourceCoords?.(sug.lat, sug.lon);
+      } else {
+        onDestinationChange(label);
+        onDestCoords?.(sug.lat, sug.lon);
+      }
+      setGeoResults([]);
+      setFocusedField(null);
+      const other = focusedField === "source" ? destination : source;
+      if (other) setTimeout(onSearch, 100);
+    },
+    [
+      focusedField, source, destination,
+      onSourceChange, onDestinationChange,
+      onSourceCoords, onDestCoords, onSearch,
+    ],
+  );
+
+  // What to show in the dropdown
+  const useStaticList = currentValue.trim().length < 2;
+  const staticFiltered = QUICK_LOCATIONS.filter(
+    (l) =>
+      (useStaticList || l.toLowerCase().includes(currentValue.toLowerCase())) &&
+      l.toLowerCase() !== (focusedField === "source" ? destination : source).toLowerCase(),
+  );
+  const showLocationOption = focusedField === "source" && !source && onUseMyLocation;
+  const hasDropdown =
+    focusedField !== null &&
+    (showLocationOption || isSearching || geoResults.length > 0 ||
+      (useStaticList && staticFiltered.length > 0));
 
   return (
     <div className="absolute top-4 left-4 z-[1100] w-[340px]">
@@ -67,15 +138,16 @@ export function SearchBar({
             type="text"
             placeholder="Enter start location"
             value={source}
-            onChange={(e) => onSourceChange(e.target.value)}
-            onFocus={() => setFocusedField("source")}
+            onChange={(e) => handleInput(e.target.value, "source")}
+            onFocus={() => { setFocusedField("source"); triggerGeocode(source); }}
             onBlur={() => setTimeout(() => setFocusedField(null), 200)}
+            onKeyDown={(e) => { if (e.key === "Enter" && source && destination) onSearch(); }}
             className="flex-1 text-sm text-gray-800 placeholder-gray-400 outline-none bg-transparent"
           />
           {source && (
             <button
               type="button"
-              onClick={() => onSourceChange("")}
+              onClick={() => { onSourceChange(""); onSourceCoords?.(null, null); }}
               className="text-gray-400 hover:text-gray-600 cursor-pointer"
             >
               <X size={16} />
@@ -90,12 +162,10 @@ export function SearchBar({
             type="text"
             placeholder="Enter stop location"
             value={destination}
-            onChange={(e) => onDestinationChange(e.target.value)}
-            onFocus={() => setFocusedField("dest")}
+            onChange={(e) => handleInput(e.target.value, "dest")}
+            onFocus={() => { setFocusedField("dest"); triggerGeocode(destination); }}
             onBlur={() => setTimeout(() => setFocusedField(null), 200)}
-            onKeyDown={(e) => {
-              if (e.key === "Enter" && source && destination) onSearch();
-            }}
+            onKeyDown={(e) => { if (e.key === "Enter" && source && destination) onSearch(); }}
             className="flex-1 text-sm text-gray-800 placeholder-gray-400 outline-none bg-transparent"
           />
           {source && destination && (
@@ -111,17 +181,14 @@ export function SearchBar({
       </div>
 
       {/* Dropdown */}
-      {focusedField && (
-        <div className="mt-1 bg-white rounded-xl shadow-lg max-h-56 overflow-y-auto">
-          {/* Your location option */}
+      {hasDropdown && (
+        <div className="mt-1 bg-white rounded-xl shadow-lg max-h-64 overflow-y-auto">
+          {/* Use my location (source only) */}
           {showLocationOption && (
             <button
               type="button"
               onMouseDown={(e) => e.preventDefault()}
-              onClick={() => {
-                onUseMyLocation?.();
-                setFocusedField(null);
-              }}
+              onClick={() => { onUseMyLocation?.(); setFocusedField(null); }}
               className="w-full text-left px-4 py-3 text-sm text-blue-600 hover:bg-blue-50 flex items-center gap-3 cursor-pointer border-b border-gray-100"
             >
               <MapPin size={16} className="text-blue-500 shrink-0" />
@@ -129,22 +196,49 @@ export function SearchBar({
             </button>
           )}
 
-          {/* Location suggestions */}
-          {filtered.length > 0 &&
-            filtered.map((loc) => (
-              <button
-                key={loc}
-                type="button"
-                onMouseDown={(e) => e.preventDefault()}
-                onClick={() => handleSelect(loc)}
-                className="w-full text-left px-4 py-2.5 text-sm text-gray-700 hover:bg-gray-50 flex items-center gap-3 cursor-pointer"
-              >
-                <Search size={14} className="text-gray-400 shrink-0" />
-                {loc}
-              </button>
-            ))}
+          {/* Live geocode searching indicator */}
+          {isSearching && (
+            <div className="px-4 py-3 text-sm text-gray-400 flex items-center gap-2">
+              <Loader2 size={14} className="animate-spin shrink-0" />
+              Searching locations...
+            </div>
+          )}
+
+          {/* Live geocoded results */}
+          {!isSearching && geoResults.map((sug, i) => (
+            <button
+              key={`geo-${i}`}
+              type="button"
+              onMouseDown={(e) => e.preventDefault()}
+              onClick={() => handleGeoSelect(sug)}
+              className="w-full text-left px-4 py-2.5 hover:bg-blue-50 flex items-start gap-3 cursor-pointer border-b border-gray-50"
+            >
+              <MapPin size={14} className="text-blue-400 mt-0.5 shrink-0" />
+              <div className="min-w-0">
+                <p className="text-sm text-gray-800 font-medium truncate">
+                  {shortenName(sug.city)}
+                </p>
+                <p className="text-xs text-gray-400 truncate">{sug.city}</p>
+              </div>
+            </button>
+          ))}
+
+          {/* Static preset list (shown when input is short or empty) */}
+          {useStaticList && staticFiltered.slice(0, 8).map((loc) => (
+            <button
+              key={loc}
+              type="button"
+              onMouseDown={(e) => e.preventDefault()}
+              onClick={() => handleStaticSelect(loc)}
+              className="w-full text-left px-4 py-2.5 text-sm text-gray-700 hover:bg-gray-50 flex items-center gap-3 cursor-pointer"
+            >
+              <Search size={14} className="text-gray-400 shrink-0" />
+              {loc}
+            </button>
+          ))}
         </div>
       )}
     </div>
   );
 }
+

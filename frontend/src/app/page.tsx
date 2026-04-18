@@ -23,6 +23,10 @@ export default function Home() {
   const [searchTrigger, setSearchTrigger] = useState(0);
   const [hasSearched, setHasSearched] = useState(false);
 
+  // Geocoded coordinate state (set when user selects a Nominatim result)
+  const [sourceCoords, setSourceCoords] = useState<{ lat: number; lng: number } | null>(null);
+  const [destCoords, setDestCoords] = useState<{ lat: number; lng: number } | null>(null);
+
   // Filter state
   const [preference, setPreference] = useState(50);
   const [telecom, setTelecom] = useState<TelecomMode>("all");
@@ -41,14 +45,18 @@ export default function Home() {
   // Network detection
   const networkInfo = useNetworkDetect();
 
+  // Coordinate-aware location strings: use "@lat,lng" when geocoded
+  const routeSource = sourceCoords ? `@${sourceCoords.lat},${sourceCoords.lng}` : source;
+  const routeDest   = destCoords   ? `@${destCoords.lat},${destCoords.lng}`   : destination;
+
   // Only query routes when we have both source and destination and user has searched
   const queryParams = useMemo(
     () =>
       hasSearched && source && destination
-        ? { source, destination, preference, telecom, max_eta_factor: maxEtaFactor }
+        ? { source: routeSource, destination: routeDest, preference, telecom, max_eta_factor: maxEtaFactor }
         : null,
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [source, destination, preference, telecom, maxEtaFactor, searchTrigger, hasSearched],
+    [routeSource, routeDest, preference, telecom, maxEtaFactor, searchTrigger, hasSearched],
   );
 
   const { data: routeData, isLoading: routesLoading } = useRoutes(
@@ -198,8 +206,14 @@ export default function Home() {
       <SearchBar
         source={source}
         destination={destination}
-        onSourceChange={setSource}
-        onDestinationChange={setDestination}
+        onSourceChange={(v) => { setSource(v); if (!v) setSourceCoords(null); }}
+        onDestinationChange={(v) => { setDestination(v); if (!v) setDestCoords(null); }}
+        onSourceCoords={(lat, lon) =>
+          setSourceCoords(lat !== null && lon !== null ? { lat, lng: lon } : null)
+        }
+        onDestCoords={(lat, lon) =>
+          setDestCoords(lat !== null && lon !== null ? { lat, lng: lon } : null)
+        }
         onSearch={handleSearch}
         onUseMyLocation={handleLocateMe}
         geoLoading={geo.loading}

@@ -71,6 +71,7 @@ The user adjusts a preference slider (0 = pure speed, 100 = pure signal) and the
 
 ### UX
 - **Conversational route finder** -- 5-step chatbot (source, destination, network priority, road quality, ISP)
+- **Geocoding search** -- Free-text location search powered by OpenStreetMap Nominatim (e.g. "MIT Bangalore", "Electronic City", "Hebbal flyover"). Results are debounced and cached; selecting a result passes exact coordinates to the routing engine via `@lat,lng` notation
 - **Geolocation** -- "Use my location" with browser GPS + reverse geocoding
 - **Network auto-detect** -- Detects carrier via Navigator.connection API
 - **Map loading skeleton** -- Spinner overlay until tiles fully render
@@ -98,7 +99,7 @@ The user adjusts a preference slider (0 = pure speed, 100 = pure signal) and the
 | FastAPI | 0.115 | Async Python API framework |
 | Uvicorn | 0.30 | ASGI server |
 | Motor | 3.6 | Async MongoDB driver |
-| httpx | 0.26 | Async HTTP client (ML + OSRM calls) |
+| httpx | 0.26 | Async HTTP client (Nominatim geocoding, ML + OSRM calls) |
 | NumPy | 1.26 | RL sampling (Beta distribution) |
 | PyTorch | 2.x | Signal prediction model |
 | Pydantic | 2.5 | Schema validation |
@@ -109,7 +110,8 @@ The user adjusts a preference slider (0 = pure speed, 100 = pure signal) and the
 | Component | Technology |
 |-----------|------------|
 | Database | MongoDB (Motor async driver) |
-| Routing Engine | OSRM (OpenStreetMap) with mock fallback |
+| Routing Engine | TomTom Routing API (real road geometry) with OSRM/mock fallback |
+| Geocoding | OpenStreetMap Nominatim (free-text to lat/lon, cached in-memory) |
 | ML Model | PyTorch ResidualSignalNet |
 | Tower Data | OpenCelliD (real) + synthetic fallback |
 | Containerization | Docker + Docker Compose |
