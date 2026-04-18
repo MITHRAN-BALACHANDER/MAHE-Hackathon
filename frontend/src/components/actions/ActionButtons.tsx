@@ -21,6 +21,9 @@ export function ActionButtons({
   geoLoading,
   geoError,
 }: Props) {
+  const btnBase =
+    "w-12 h-12 rounded-full flex items-center justify-center cursor-pointer transition-all duration-200 focus-visible:ring-2 focus-visible:ring-cyan-400 focus-visible:outline-none";
+
   return (
     <div className="absolute bottom-6 right-4 z-[1000] flex flex-col gap-2">
       {/* My location */}
@@ -29,7 +32,7 @@ export function ActionButtons({
           type="button"
           onClick={onLocateMe}
           disabled={geoLoading}
-          className="w-12 h-12 rounded-full bg-white text-gray-600 shadow-lg flex items-center justify-center hover:bg-gray-50 cursor-pointer transition-colors disabled:opacity-50"
+          className={`${btnBase} glass-card text-white/60 hover:text-white hover:scale-105 disabled:opacity-40`}
           title={geoError ?? "Use my location"}
         >
           {geoLoading ? (
@@ -44,14 +47,14 @@ export function ActionButtons({
       <button
         type="button"
         onClick={onToggleTracking}
-        className={`w-12 h-12 rounded-full shadow-lg flex items-center justify-center cursor-pointer transition-colors ${
+        className={`${btnBase} ${
           tracking
-            ? "bg-blue-500 text-white"
-            : "bg-white text-gray-600 hover:bg-gray-50"
+            ? "bg-gradient-to-br from-cyan-500 to-blue-600 text-white shadow-lg shadow-cyan-500/30 animate-pulse-ring"
+            : "glass-card text-white/60 hover:text-white hover:scale-105"
         }`}
         title={tracking ? "Stop tracking" : "Start live tracking"}
       >
-        {tracking ? <Navigation size={20} className="animate-pulse" /> : <Locate size={20} />}
+        {tracking ? <Navigation size={20} /> : <Locate size={20} />}
       </button>
 
       {/* Smart reroute */}
@@ -59,7 +62,7 @@ export function ActionButtons({
         type="button"
         onClick={onReroute}
         disabled={loading}
-        className="w-12 h-12 rounded-full bg-white text-gray-600 shadow-lg flex items-center justify-center hover:bg-gray-50 cursor-pointer transition-colors disabled:opacity-50"
+        className={`${btnBase} glass-card text-white/60 hover:text-cyan-400 hover:scale-105 disabled:opacity-40`}
         title="Smart reroute"
       >
         {loading ? (

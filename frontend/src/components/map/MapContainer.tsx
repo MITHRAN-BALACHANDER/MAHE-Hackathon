@@ -7,9 +7,12 @@ import type { HeatmapFilterType } from "./MapView";
 const MapView = dynamic(() => import("./MapView"), {
   ssr: false,
   loading: () => (
-    <div className="absolute inset-0 bg-gray-50 flex flex-col items-center justify-center gap-4">
-      <div className="w-10 h-10 border-3 border-gray-200 border-t-blue-500 rounded-full animate-spin" />
-      <p className="text-sm text-gray-400">Loading map...</p>
+    <div className="absolute inset-0 bg-slate-900 flex flex-col items-center justify-center gap-4">
+      <div className="relative">
+        <div className="w-12 h-12 border-[3px] border-white/10 border-t-cyan-400 rounded-full animate-spin" />
+        <div className="absolute inset-0 w-12 h-12 border-[3px] border-transparent border-b-blue-400 rounded-full animate-spin" style={{ animationDirection: "reverse", animationDuration: "1.5s" }} />
+      </div>
+      <p className="text-sm text-white/50 tracking-wide">Loading map</p>
     </div>
   ),
 });

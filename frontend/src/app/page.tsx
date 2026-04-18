@@ -35,9 +35,6 @@ export default function Home() {
   const [maxEtaFactor, setMaxEtaFactor] = useState(1.5);
   const [heatmapFilter, setHeatmapFilter] = useState<HeatmapFilterType>("signal");
 
-  // Route intent: "speed" = fastest route, "signal" = best connectivity
-  const [routeIntent, setRouteIntent] = useState<"speed" | "signal">("signal");
-
   // UI state
   const [selectedRouteIndex, setSelectedRouteIndex] = useState(0);
   const [sidebarOpen, setSidebarOpen] = useState(true);
@@ -428,36 +425,29 @@ export default function Home() {
         geoLoading={geo.loading}
       />
 
-      {/* Route intent quick-pick (below search bar) */}
-      <div className="absolute top-[120px] left-4 z-[1000] flex gap-1 bg-white/95 backdrop-blur rounded-lg shadow-md p-1">
-        <button
-          type="button"
-          onClick={() => { setRouteIntent("speed"); setPreference(10); }}
-          className={`px-3 py-1.5 text-xs font-medium rounded-md transition-colors cursor-pointer ${
-            routeIntent === "speed"
-              ? "bg-blue-500 text-white"
-              : "text-gray-600 hover:bg-gray-100"
-          }`}
-        >
-          Fastest Route
-        </button>
-        <button
-          type="button"
-          onClick={() => { setRouteIntent("signal"); setPreference(80); }}
-          className={`px-3 py-1.5 text-xs font-medium rounded-md transition-colors cursor-pointer ${
-            routeIntent === "signal"
-              ? "bg-blue-500 text-white"
-              : "text-gray-600 hover:bg-gray-100"
-          }`}
-        >
-          Best Signal
-        </button>
+      {/* Signal vs Speed preference slider */}
+      <div className="absolute top-[120px] left-4 z-[1000] w-[360px] glass-card rounded-xl px-3 pt-2.5 pb-3">
+        <div className="flex justify-between items-center mb-2">
+          <span className="text-[11px] text-white/45 font-medium">Speed</span>
+          <span className="text-[11px] font-semibold text-cyan-400">
+            {preference <= 25 ? "Fastest Route" : preference >= 75 ? "Best Signal" : "Balanced"}
+          </span>
+          <span className="text-[11px] text-white/45 font-medium">Signal</span>
+        </div>
+        <input
+          type="range"
+          min={0}
+          max={100}
+          value={preference}
+          onChange={(e) => setPreference(Number(e.target.value))}
+          className="w-full cursor-pointer accent-cyan-400"
+        />
       </div>
 
       {/* Enriching indicator */}
       {hasSearched && !hasFull && fullLoading && routes.length > 0 && (
-        <div className="absolute top-[160px] left-4 z-[1000] bg-white/95 backdrop-blur rounded-lg shadow-md px-3 py-2 text-xs text-gray-500 flex items-center gap-2">
-          <span className="inline-block h-2 w-2 rounded-full bg-blue-400 animate-pulse" />
+        <div className="absolute top-[215px] left-4 z-[900] glass-card rounded-lg px-3 py-2 text-xs text-white/50 flex items-center gap-2 animate-fade-in">
+          <span className="inline-block h-2 w-2 rounded-full bg-cyan-400 animate-pulse" />
           Running ML models for precise signal scores...
         </div>
       )}
@@ -486,8 +476,8 @@ export default function Home() {
 
       {/* Call-drop stats badge */}
       {callDropStats && callDropStats.drops_avoided > 0 && (
-        <div className="absolute top-72 right-4 z-[1000] rounded-xl bg-green-50 px-3 py-2 shadow-md ring-1 ring-green-200 text-sm">
-          <p className="font-medium text-green-700">{callDropStats.message}</p>
+        <div className="absolute bottom-6 left-1/2 -translate-x-1/2 z-[1000] glass-card rounded-xl px-4 py-2 text-sm whitespace-nowrap">
+          <p className="font-medium text-emerald-400">{callDropStats.message}</p>
         </div>
       )}
 

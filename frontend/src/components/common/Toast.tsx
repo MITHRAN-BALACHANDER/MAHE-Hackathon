@@ -1,7 +1,7 @@
 "use client";
 
 import { AlertTriangle, Info, X } from "lucide-react";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 
 type Props = {
   message: string | null;
@@ -11,28 +11,38 @@ type Props = {
 export function Toast({ message, type = "info" }: Props) {
   const [dismissed, setDismissed] = useState(false);
 
+  useEffect(() => {
+    setDismissed(false);
+  }, [message]);
+
+  useEffect(() => {
+    if (!message || dismissed) return;
+    const timer = setTimeout(() => setDismissed(true), 8000);
+    return () => clearTimeout(timer);
+  }, [message, dismissed]);
+
   if (!message || dismissed) return null;
 
   const Icon = type === "warning" || type === "reroute" ? AlertTriangle : Info;
-  const bg =
+  const accent =
     type === "warning"
-      ? "bg-yellow-50 border-yellow-200 text-yellow-800"
+      ? "border-l-amber-400 text-amber-300"
       : type === "reroute"
-        ? "bg-blue-50 border-blue-200 text-blue-800"
-        : "bg-white border-gray-200 text-gray-700";
+        ? "border-l-cyan-400 text-cyan-300"
+        : "border-l-white/40 text-white/80";
 
   return (
     <div
-      className={`absolute bottom-6 left-4 z-[1000] max-w-sm rounded-xl border shadow-lg px-4 py-3 flex items-start gap-3 ${bg}`}
+      className={`absolute bottom-24 left-4 z-[1100] max-w-sm glass-card rounded-xl border-l-4 px-4 py-3 flex items-start gap-3 animate-slide-up ${accent}`}
     >
-      <Icon size={18} className="shrink-0 mt-0.5" />
+      <Icon size={18} className="shrink-0 mt-0.5 opacity-80" />
       <p className="text-sm flex-1">{message}</p>
       <button
         type="button"
         onClick={() => setDismissed(true)}
-        className="shrink-0 opacity-60 hover:opacity-100 cursor-pointer"
+        className="shrink-0 text-white/30 hover:text-white/70 cursor-pointer transition-colors"
       >
-        <X size={16} />
+        <X size={14} />
       </button>
     </div>
   );

@@ -1,4 +1,4 @@
-"use client";
+﻿"use client";
 
 import { AlertTriangle, ChevronLeft, Clock, MapPin, Navigation, Signal, Shield, Wifi } from "lucide-react";
 import type { RouteOption } from "@/src/types/route";
@@ -15,16 +15,16 @@ type Props = {
 };
 
 function signalBadge(score: number) {
-  if (score >= 70) return { label: "Strong", color: "bg-green-100 text-green-700" };
-  if (score >= 40) return { label: "Medium", color: "bg-yellow-100 text-yellow-700" };
-  return { label: "Weak", color: "bg-red-100 text-red-700" };
+  if (score >= 70) return { label: "Strong", color: "bg-emerald-500/20 text-emerald-400 ring-emerald-500/30" };
+  if (score >= 40) return { label: "Medium", color: "bg-amber-500/20 text-amber-400 ring-amber-500/30" };
+  return { label: "Weak", color: "bg-red-500/20 text-red-400 ring-red-500/30" };
 }
 
 function stabilityLabel(score: number | undefined) {
   if (score === undefined) return null;
-  if (score >= 70) return { label: "Stable", color: "text-green-600" };
-  if (score >= 40) return { label: "Variable", color: "text-yellow-600" };
-  return { label: "Unstable", color: "text-red-600" };
+  if (score >= 70) return { label: "Stable", color: "text-emerald-400" };
+  if (score >= 40) return { label: "Variable", color: "text-amber-400" };
+  return { label: "Unstable", color: "text-red-400" };
 }
 
 export function RouteSidebar({
@@ -40,21 +40,21 @@ export function RouteSidebar({
   if (!visible || routes.length === 0) return null;
 
   return (
-    <div className="absolute top-[120px] left-0 z-[800] max-h-[calc(100vh-130px)] w-[380px] bg-white shadow-xl flex flex-col rounded-tr-xl rounded-br-xl overflow-hidden">
+    <div className="absolute top-[207px] left-3 z-[800] max-h-[calc(100vh-217px)] w-[360px] glass-card flex flex-col rounded-2xl overflow-hidden animate-slide-in-left">
       {/* Header */}
-      <div className="flex items-center gap-2 px-4 py-3 border-b border-gray-100">
+      <div className="flex items-center gap-2 px-4 py-3 border-b border-slate-700/60">
         <button
           type="button"
           onClick={onClose}
-          className="p-1 hover:bg-gray-100 rounded-full cursor-pointer"
+          className="p-1.5 hover:bg-white/10 rounded-full cursor-pointer transition-colors"
         >
-          <ChevronLeft size={20} className="text-gray-600" />
+          <ChevronLeft size={18} className="text-white/60" />
         </button>
-        <h2 className="text-sm font-semibold text-gray-800">Routes</h2>
-        <span className="ml-auto text-xs text-gray-400">
+        <h2 className="text-sm font-semibold text-white/90">Routes</h2>
+        <span className="ml-auto text-xs text-white/40">
           {routes.length} options
           {enriching && (
-            <span className="ml-1 text-blue-400 animate-pulse">-- refining</span>
+            <span className="ml-1.5 text-cyan-400 animate-pulse">refining...</span>
           )}
         </span>
       </div>
@@ -75,55 +75,60 @@ export function RouteSidebar({
               key={route.name}
               type="button"
               onClick={() => onSelect(i)}
-              className={`w-full text-left px-4 py-4 border-b border-gray-50 cursor-pointer transition-colors ${
+              className={`w-full text-left px-4 py-3.5 border-b border-slate-700/30 cursor-pointer transition-all duration-200 ${
                 isRejected
-                  ? "bg-red-50/50 border-l-4 border-l-red-300 opacity-70"
+                  ? "bg-red-500/10 border-l-4 border-l-red-500/50 opacity-60"
                   : isSelected
-                  ? "bg-blue-50 border-l-4 border-l-blue-500"
-                  : "hover:bg-gray-50 border-l-4 border-l-transparent"
+                  ? "bg-cyan-500/10 border-l-4 border-l-cyan-400"
+                  : "hover:bg-slate-800/70 border-l-4 border-l-transparent"
               }`}
             >
               {/* Route name & badges */}
               <div className="flex items-center gap-2 mb-1.5">
                 <Navigation
                   size={14}
-                  className={isSelected ? "text-blue-600" : "text-gray-400"}
+                  className={isSelected ? "text-cyan-400" : "text-white/30"}
                 />
                 <span
                   className={`text-sm font-medium ${
-                    isRejected ? "text-red-500 line-through" : isSelected ? "text-blue-700" : "text-gray-800"
+                    isRejected ? "text-red-400 line-through" : isSelected ? "text-cyan-300" : "text-white/85"
                   }`}
                 >
                   {route.name}
                 </span>
                 {isRejected && (
-                  <span className="text-[10px] font-semibold bg-red-100 text-red-600 px-1.5 py-0.5 rounded-full">
+                  <span className="text-[10px] font-semibold bg-red-500/20 text-red-400 px-1.5 py-0.5 rounded-full">
                     Too Slow
                   </span>
                 )}
                 {isSuggested && (
-                  <span className="text-[10px] font-semibold bg-green-500 text-white px-1.5 py-0.5 rounded-full">
+                  <span className="text-[10px] font-semibold bg-emerald-500/20 text-emerald-400 px-1.5 py-0.5 rounded-full">
                     Suggested
                   </span>
                 )}
               </div>
 
               {/* Stats row */}
-              <div className="flex items-center gap-3 text-xs text-gray-500">
-                <span className="flex items-center gap-1">
-                  <Clock size={12} />
-                  {route.eta} min
-                </span>
-                <span className="flex items-center gap-1">
-                  <MapPin size={12} />
-                  {route.distance} km
-                </span>
+              <div className="flex items-center gap-2 mt-2">
+                {/* ETA chip */}
+                <div className="flex items-center gap-1.5 bg-slate-800 rounded-lg px-2.5 py-1.5 min-w-0">
+                  <Clock size={11} className="text-cyan-400 shrink-0" />
+                  <span className="text-sm font-bold text-white leading-none">{route.eta}</span>
+                  <span className="text-[10px] text-white/40 leading-none">min</span>
+                </div>
+                {/* Distance chip */}
+                <div className="flex items-center gap-1.5 bg-slate-800 rounded-lg px-2.5 py-1.5 min-w-0">
+                  <MapPin size={11} className="text-blue-400 shrink-0" />
+                  <span className="text-sm font-bold text-white leading-none">{route.distance}</span>
+                  <span className="text-[10px] text-white/40 leading-none">km</span>
+                </div>
+                {/* Signal badge */}
                 <span
-                  className={`flex items-center gap-1 px-1.5 py-0.5 rounded-full text-[10px] font-medium ${badge.color}`}
+                  className={`flex items-center gap-1 px-2 py-1.5 rounded-lg text-[11px] font-semibold ring-1 ${badge.color}`}
                 >
                   <Signal size={10} />
                   {badge.label} {Math.round(route.signal_score)}
-                  {enriching && <span className="ml-0.5 text-gray-400 animate-pulse">~</span>}
+                  {enriching && <span className="ml-0.5 text-white/30 animate-pulse">~</span>}
                 </span>
               </div>
 
@@ -132,10 +137,10 @@ export function RouteSidebar({
                 <div className="flex items-center gap-3 mt-1.5 text-xs">
                   <span className={`flex items-center gap-1 ${stability.color}`}>
                     <Shield size={10} />
-                    {stability.label} (score: {Math.round(route.stability_score ?? 0)})
+                    {stability.label} ({Math.round(route.stability_score ?? 0)})
                   </span>
                   {route.longest_stable_window !== undefined && route.longest_stable_window > 0 && (
-                    <span className="text-gray-400">
+                    <span className="text-white/30">
                       {route.longest_stable_window} stable segments
                     </span>
                   )}
@@ -144,10 +149,10 @@ export function RouteSidebar({
 
               {/* Multi-SIM info */}
               {hasMultiSim && route.multi_sim && (
-                <div className="mt-1.5 px-2 py-1 bg-purple-50 rounded text-[10px] text-purple-700 flex items-center gap-1.5">
+                <div className="mt-1.5 px-2 py-1 bg-purple-500/15 rounded text-[10px] text-purple-300 flex items-center gap-1.5">
                   <Wifi size={10} />
-                  Best carrier: <span className="font-semibold">{route.multi_sim.best_carrier}</span>
-                  <span className="text-purple-500 ml-1">
+                  Best: <span className="font-semibold">{route.multi_sim.best_carrier}</span>
+                  <span className="text-purple-400/60 ml-1">
                     (signal {route.multi_sim.combined_avg_signal})
                   </span>
                 </div>
@@ -159,7 +164,7 @@ export function RouteSidebar({
                   {route.bad_zones!.slice(0, 2).map((bz, j) => (
                     <div
                       key={j}
-                      className="flex items-start gap-1 text-[10px] text-orange-600 bg-orange-50 px-2 py-1 rounded"
+                      className="flex items-start gap-1 text-[10px] text-orange-400 bg-orange-500/10 px-2 py-1 rounded"
                     >
                       <AlertTriangle size={10} className="mt-0.5 shrink-0" />
                       <span>
@@ -170,7 +175,7 @@ export function RouteSidebar({
                     </div>
                   ))}
                   {(route.bad_zones?.length ?? 0) > 2 && (
-                    <span className="text-[10px] text-orange-500 pl-2">
+                    <span className="text-[10px] text-orange-500/60 pl-2">
                       +{(route.bad_zones?.length ?? 0) - 2} more zones
                     </span>
                   )}
@@ -182,7 +187,7 @@ export function RouteSidebar({
                 {route.zones.map((z) => (
                   <span
                     key={z}
-                    className="text-[10px] bg-gray-100 text-gray-500 px-1.5 py-0.5 rounded"
+                    className="text-[10px] bg-slate-800 text-white/40 px-1.5 py-0.5 rounded"
                   >
                     {z}
                   </span>

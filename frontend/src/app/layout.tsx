@@ -30,7 +30,7 @@ export default function RootLayout({
       lang="en"
       className={`${spaceGrotesk.variable} ${sora.variable} h-full antialiased`}
     >
-      <body className="h-full w-full overflow-hidden">
+      <body className="h-full w-full overflow-hidden font-[family-name:var(--font-space-grotesk)]">
         <QueryProvider>
           <AuthProvider>{children}</AuthProvider>
         </QueryProvider>

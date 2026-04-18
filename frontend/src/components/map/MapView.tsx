@@ -13,16 +13,16 @@ const DEFAULT_ZOOM = 12;
 const MAPBOX_TOKEN = process.env.NEXT_PUBLIC_MAPBOX_TOKEN ?? "";
 
 const ROUTE_COLORS = {
-  selected: "#3b82f6",
+  selected: "#00ffff",   // electric cyan
 } as const;
 
 const ROUTE_ALT_PALETTE = [
-  "#94a3b8", // slate
-  "#4ade80", // green
-  "#fb923c", // orange
-  "#c084fc", // purple
-  "#34d399", // emerald
-  "#f472b6", // pink
+  "#ff3dff", // neon magenta
+  "#00ff88", // neon green
+  "#ff8800", // neon orange
+  "#ffff00", // neon yellow
+  "#ff0066", // neon hot-pink
+  "#aa44ff", // neon violet
 ];
 
 function getRouteColor(index: number, selectedIndex: number): string {
@@ -94,7 +94,33 @@ function distToPolylineM(
 }
 
 /**
- * Return only towers within `bufferM` meters of any segment of the route path.
+ * Densify a route path by interpolating extra points every `stepM` meters
+ * along each segment. This ensures that even sparse 2–3 point paths (e.g.
+ * from TomTom's encoded polyline) yield enough intermediate points for an
+ * accurate perpendicular-distance filter across the full road corridor.
+ */
+function densifyPath(path: Coordinate[], stepM: number = 150): Coordinate[] {
+  if (path.length < 2) return path;
+  const out: Coordinate[] = [path[0]];
+  for (let i = 0; i < path.length - 1; i++) {
+    const a = path[i];
+    const b = path[i + 1];
+    const dx = (b.lng - a.lng) * DEG_TO_M_LNG;
+    const dy = (b.lat - a.lat) * DEG_TO_M_LAT;
+    const segLen = Math.sqrt(dx * dx + dy * dy);
+    const steps = Math.max(1, Math.ceil(segLen / stepM));
+    for (let s = 1; s <= steps; s++) {
+      const t = s / steps;
+      out.push({ lat: a.lat + t * (b.lat - a.lat), lng: a.lng + t * (b.lng - a.lng) });
+    }
+  }
+  return out;
+}
+
+/**
+ * Return only towers within `bufferM` meters of the route polyline.
+ * The path is first densified so that sparse paths (few vertices) still
+ * produce an accurate corridor along the actual road.
  */
 function filterTowersNearRoute(
   towers: TowerMarker[],
@@ -102,7 +128,8 @@ function filterTowersNearRoute(
   bufferM: number = TOWER_BUFFER_M,
 ): TowerMarker[] {
   if (!path || path.length < 2) return [];
-  return towers.filter((t) => distToPolylineM(t.lat, t.lng, path) <= bufferM);
+  const dense = densifyPath(path, 150);
+  return towers.filter((t) => distToPolylineM(t.lat, t.lng, dense) <= bufferM);
 }
 
 function pathToGeoJSON(path: Coordinate[]): GeoJSON.Feature<GeoJSON.LineString> {
@@ -133,25 +160,7 @@ function getBounds(coords: Coordinate[]): mapboxgl.LngLatBoundsLike {
   ];
 }
 
-function createPinElement(type: "source" | "destination"): HTMLDivElement {
-  const color = type === "source" ? "#3b82f6" : "#ef4444";
-  const label = type === "source" ? "A" : "B";
-  const el = document.createElement("div");
-  el.style.cursor = "grab";
-  el.innerHTML = `
-    <svg width="36" height="48" viewBox="0 0 36 48">
-      <defs>
-        <filter id="ps-${type}" x="-20%" y="-10%" width="140%" height="130%">
-          <feDropShadow dx="0" dy="2" stdDeviation="2" flood-opacity="0.3"/>
-        </filter>
-      </defs>
-      <path d="M18 0C8.06 0 0 8.06 0 18c0 12.6 18 30 18 30s18-17.4 18-30C36 8.06 27.94 0 18 0z"
-            fill="${color}" filter="url(#ps-${type})"/>
-      <circle cx="18" cy="18" r="10" fill="white"/>
-      <text x="18" y="23" text-anchor="middle" font-size="14" font-weight="bold" fill="${color}">${label}</text>
-    </svg>`;
-  return el;
-}
+
 
 // ---------------------------------------------------------------------------
 // Component
@@ -193,19 +202,78 @@ export default function MapView({
 
     const map = new mapboxgl.Map({
       container: containerRef.current,
-      style: "mapbox://styles/mapbox/dark-v11",
+      // Satellite imagery with street labels -- vivid and geographical
+      style: "mapbox://styles/mapbox/satellite-streets-v12",
       center: BANGALORE_CENTER,
       zoom: DEFAULT_ZOOM,
-      pitch: 0,
-      bearing: 0,
+      pitch: 52,
+      bearing: -12,
       antialias: true,
       attributionControl: false,
     });
 
-    map.addControl(new mapboxgl.NavigationControl({ showCompass: false }), "bottom-right");
+    map.addControl(new mapboxgl.NavigationControl({ showCompass: true }), "bottom-right");
     map.addControl(new mapboxgl.AttributionControl({ compact: true }), "bottom-right");
 
-    map.on("load", () => setMapLoaded(true));
+    map.on("load", () => {
+      // ---- Mapbox terrain DEM (actual elevation, needed for 3-D terrain) ----
+      map.addSource("mapbox-dem", {
+        type: "raster-dem",
+        url: "mapbox://mapbox.mapbox-terrain-dem-v1",
+        tileSize: 512,
+        maxzoom: 14,
+      });
+      map.setTerrain({ source: "mapbox-dem", exaggeration: 2.0 });
+
+      // ---- Realistic sky layer ----
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      map.addLayer({
+        id: "sky",
+        type: "sky",
+        paint: {
+          "sky-type": "atmosphere",
+          "sky-atmosphere-sun": [0.0, 60.0],
+          "sky-atmosphere-sun-intensity": 12,
+          "sky-atmosphere-color": "rgba(85, 151, 210, 0.75)",
+          "sky-atmosphere-halo-color": "rgba(245, 214, 123, 0.5)",
+        },
+      } as any);
+
+      // ---- 3D building extrusion -- warm glass look on satellite ----
+      const firstSymbol = map
+        .getStyle()
+        .layers?.find((l: { type: string }) => l.type === "symbol")?.id;
+
+      map.addLayer(
+        {
+          id: "3d-buildings",
+          source: "composite",
+          "source-layer": "building",
+          filter: ["==", "extrude", "true"],
+          type: "fill-extrusion",
+          minzoom: 13,
+          paint: {
+            // White-to-blue glass towers that contrast well on satellite imagery
+            "fill-extrusion-color": [
+              "interpolate",
+              ["linear"],
+              ["get", "height"],
+              0,   "rgba(220,230,255,0.55)",
+              30,  "rgba(160,195,255,0.65)",
+              80,  "rgba(100,160,255,0.70)",
+              200, "rgba(60,120,255,0.75)",
+            ],
+            "fill-extrusion-height": ["get", "height"],
+            "fill-extrusion-base": ["get", "min_height"],
+            "fill-extrusion-opacity": 0.80,
+            "fill-extrusion-vertical-gradient": true,
+          },
+        } as mapboxgl.AnyLayer,
+        firstSymbol,
+      );
+
+      setMapLoaded(true);
+    });
 
     mapRef.current = map;
 
@@ -264,7 +332,7 @@ export default function MapView({
       routeIdsRef.current.push(srcId);
 
       if (isSelected) {
-        // Glow layer
+        // Wide soft glow halo
         map.addLayer({
           id: `${srcId}-glow`,
           type: "line",
@@ -272,24 +340,24 @@ export default function MapView({
           layout: { "line-join": "round", "line-cap": "round" },
           paint: {
             "line-color": color,
-            "line-width": 18,
-            "line-opacity": 0.12,
-            "line-blur": 10,
+            "line-width": 28,
+            "line-opacity": 0.30,
+            "line-blur": 16,
           },
         });
-        // Casing layer (dark outline)
+        // Black contrast casing
         map.addLayer({
           id: `${srcId}-casing`,
           type: "line",
           source: srcId,
           layout: { "line-join": "round", "line-cap": "round" },
           paint: {
-            "line-color": "#1e3a5f",
-            "line-width": 9,
-            "line-opacity": 0.35,
+            "line-color": "#000000",
+            "line-width": 11,
+            "line-opacity": 0.65,
           },
         });
-        // Main route
+        // Bright neon main line
         map.addLayer({
           id: `${srcId}-main`,
           type: "line",
@@ -297,25 +365,25 @@ export default function MapView({
           layout: { "line-join": "round", "line-cap": "round" },
           paint: {
             "line-color": color,
-            "line-width": 5,
+            "line-width": 7,
             "line-opacity": 1,
           },
         });
       } else {
-        // Alt: casing (subtle)
+        // Alt: dark casing
         map.addLayer({
           id: `${srcId}-casing`,
           type: "line",
           source: srcId,
           layout: { "line-join": "round", "line-cap": "round" },
           paint: {
-            "line-color": color,
-            "line-width": 5,
-            "line-opacity": 0.2,
+            "line-color": "#000000",
+            "line-width": 7,
+            "line-opacity": 0.45,
             "line-dasharray": [2, 2],
           },
         });
-        // Alt: main
+        // Vivid neon dashed alt
         map.addLayer({
           id: `${srcId}-main`,
           type: "line",
@@ -323,8 +391,8 @@ export default function MapView({
           layout: { "line-join": "round", "line-cap": "round" },
           paint: {
             "line-color": color,
-            "line-width": 3,
-            "line-opacity": 0.5,
+            "line-width": 5,
+            "line-opacity": 0.85,
             "line-dasharray": [4, 3],
           },
         });
@@ -386,33 +454,131 @@ export default function MapView({
       const startPt = selected.path[0];
       const endPt = selected.path[selected.path.length - 1];
 
-      const srcPin = new mapboxgl.Marker({
-        element: createPinElement("source"),
-        draggable: true,
-        anchor: "bottom",
-      })
+      const srcPin = new mapboxgl.Marker({ color: "#3b82f6", draggable: false })
         .setLngLat([startPt.lng, startPt.lat])
         .addTo(map);
-      srcPin.on("dragend", () => handlePinDragEnd("source", srcPin));
       pinMarkersRef.current.push(srcPin);
 
-      const dstPin = new mapboxgl.Marker({
-        element: createPinElement("destination"),
-        draggable: true,
-        anchor: "bottom",
-      })
+      const dstPin = new mapboxgl.Marker({ color: "#ef4444", draggable: false })
         .setLngLat([endPt.lng, endPt.lat])
         .addTo(map);
-      dstPin.on("dragend", () => handlePinDragEnd("destination", dstPin));
       pinMarkersRef.current.push(dstPin);
 
-      // Fit bounds with smooth camera transition
+      // Fit bounds -- preserve 3D pitch and add tilt offset so the route
+      // sits in the bottom half of the viewport (natural for pitched views).
       map.fitBounds(getBounds(selected.path), {
-        padding: { top: 80, bottom: 80, left: 400, right: 80 },
-        duration: 800,
+        padding: { top: 120, bottom: 200, left: 420, right: 100 },
+        pitch: 50,
+        bearing: -10,
+        duration: 900,
+        linear: false,
       });
     }
   }, [mapLoaded, routes, selectedRouteIndex, onRouteClick, handlePinDragEnd]);
+
+  // -----------------------------------------------------------------------
+  // 2b. Dead zone heatmap -- neon red/orange blobs on the selected route
+  // -----------------------------------------------------------------------
+  const deadZoneIdsRef = useRef<string[]>([]);
+
+  useEffect(() => {
+    if (!mapLoaded || !mapRef.current) return;
+    const map = mapRef.current;
+
+    // Clean up previous dead zone layers/sources
+    for (const id of deadZoneIdsRef.current) {
+      if (map.getLayer(`${id}-pulse`)) map.removeLayer(`${id}-pulse`);
+      if (map.getLayer(`${id}-fill`)) map.removeLayer(`${id}-fill`);
+      if (map.getSource(id)) map.removeSource(id);
+    }
+    deadZoneIdsRef.current = [];
+
+    const selected = routes[selectedRouteIndex];
+    if (!selected?.bad_zones?.length) return;
+
+    selected.bad_zones.forEach((bz, idx) => {
+      const midLat = (bz.start_coord.lat + bz.end_coord.lat) / 2;
+      const midLng = (bz.start_coord.lng + bz.end_coord.lng) / 2;
+
+      // Radius proportional to the zone length, minimum 200m
+      const radiusDeg = Math.max(0.002, (bz.length_km / 111) * 0.5);
+
+      // Build a circle polygon (32 segments)
+      const steps = 32;
+      const coords: [number, number][] = [];
+      for (let s = 0; s <= steps; s++) {
+        const angle = (s / steps) * 2 * Math.PI;
+        const lngScale = Math.cos((midLat * Math.PI) / 180);
+        coords.push([
+          midLng + (radiusDeg / lngScale) * Math.cos(angle),
+          midLat + radiusDeg * Math.sin(angle),
+        ]);
+      }
+
+      const srcId = `dz-${selectedRouteIndex}-${idx}`;
+      map.addSource(srcId, {
+        type: "geojson",
+        data: {
+          type: "Feature",
+          properties: { warning: bz.warning, length_km: bz.length_km },
+          geometry: { type: "Polygon", coordinates: [coords] },
+        },
+      });
+      deadZoneIdsRef.current.push(srcId);
+
+      // Outer glow / pulse ring
+      map.addLayer({
+        id: `${srcId}-pulse`,
+        type: "fill",
+        source: srcId,
+        paint: {
+          "fill-color": "#ff1744",
+          "fill-opacity": 0.12,
+        },
+      });
+
+      // Inner solid fill
+      map.addLayer({
+        id: `${srcId}-fill`,
+        type: "fill",
+        source: srcId,
+        paint: {
+          "fill-color": [
+            "interpolate", ["linear"],
+            ["get", "length_km"],
+            0, "#ff6b35",
+            2, "#ff1744",
+            5, "#b71c1c",
+          ] as unknown as mapboxgl.Expression,
+          "fill-opacity": 0.38,
+          "fill-outline-color": "#ff1744",
+        },
+      });
+
+      // Popup on click
+      map.on("click", `${srcId}-fill`, () => {
+        new mapboxgl.Popup({ closeButton: true, offset: 4 })
+          .setLngLat([midLng, midLat])
+          .setHTML(
+            `<div style="font-family:system-ui;padding:2px 0;">
+              <div style="font-weight:700;font-size:12px;color:#ff4444;margin-bottom:4px;">Dead Zone</div>
+              <div style="font-size:11px;color:#374151;">${bz.warning}</div>
+              <div style="display:flex;gap:8px;margin-top:4px;font-size:10px;color:#9ca3af;">
+                <span>${bz.length_km} km</span>
+                <span>~${Math.round(bz.time_to_zone_min)} min away</span>
+              </div>
+            </div>`,
+          )
+          .addTo(map);
+      });
+      map.on("mouseenter", `${srcId}-fill`, () => {
+        map.getCanvas().style.cursor = "pointer";
+      });
+      map.on("mouseleave", `${srcId}-fill`, () => {
+        map.getCanvas().style.cursor = "";
+      });
+    });
+  }, [mapLoaded, routes, selectedRouteIndex]);
 
   // -----------------------------------------------------------------------
   // 3. Tower dot markers -- only towers near the selected route

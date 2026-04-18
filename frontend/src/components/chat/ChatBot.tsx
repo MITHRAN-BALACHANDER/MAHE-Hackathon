@@ -32,18 +32,19 @@ function buildSteps(detectedProvider: string): Step[] {
       inputPlaceholder: "e.g. Whitefield, MG Road...",
     },
     {
-      id: "network_quality",
-      question: "How important is network quality on your route?",
-      options: ["Not important", "Somewhat important", "Very important"],
-    },
-    {
-      id: "road_quality",
-      question: "How important is road quality to you?",
-      options: ["Any road is fine", "Prefer decent roads", "Only good roads"],
+      id: "use_case",
+      question: "What will you mainly use your internet for on the way?",
+      options: [
+        "On a call / Video call",
+        "Streaming music or video",
+        "Uploading or downloading files",
+        "Browsing / Social media",
+        "Everything / All of the above",
+      ],
     },
     {
       id: "isp",
-      question: `Which network provider would you like to use?${detectedProvider && detectedProvider !== "unknown" ? ` (Detected: ${detectedProvider})` : ""}`,
+      question: `Which network do you use?${detectedProvider && detectedProvider !== "unknown" ? ` (Detected: ${detectedProvider})` : ""}`,
       options: ispOptions,
     },
     {
@@ -62,9 +63,16 @@ type Message = {
 type ChatAnswers = {
   source: string;
   destination: string;
-  network_quality: string;
-  road_quality: string;
+  use_case: string;
   isp: string;
+};
+
+const USE_CASE_MAP: Record<string, { preference: number; label: string }> = {
+  "On a call / Video call":         { preference: 90, label: "call reliability" },
+  "Streaming music or video":        { preference: 82, label: "streaming stability" },
+  "Uploading or downloading files":  { preference: 75, label: "data throughput" },
+  "Browsing / Social media":         { preference: 50, label: "balanced browsing" },
+  "Everything / All of the above":   { preference: 85, label: "all-round connectivity" },
 };
 
 function answersToParams(answers: ChatAnswers): {
@@ -74,29 +82,8 @@ function answersToParams(answers: ChatAnswers): {
   telecom: TelecomMode;
   summary: string;
 } {
-  let preference = 50;
-
-  switch (answers.network_quality) {
-    case "Not important":
-      preference = 20;
-      break;
-    case "Somewhat important":
-      preference = 50;
-      break;
-    case "Very important":
-      preference = 85;
-      break;
-  }
-
-  // Road quality nudges preference toward speed (lower = faster/better roads)
-  switch (answers.road_quality) {
-    case "Only good roads":
-      preference = Math.max(preference - 15, 5);
-      break;
-    case "Any road is fine":
-      preference = Math.min(preference + 10, 100);
-      break;
-  }
+  const mapped = USE_CASE_MAP[answers.use_case] ?? { preference: 60, label: "optimised connectivity" };
+  const preference = mapped.preference;
 
   let telecom: TelecomMode = "all";
   const ispLower = answers.isp.toLowerCase();
@@ -104,10 +91,7 @@ function answersToParams(answers: ChatAnswers): {
   else if (ispLower.includes("airtel")) telecom = "airtel";
   else if (ispLower.includes("vi")) telecom = "vi";
 
-  const networkLabel =
-    preference >= 70 ? "strong network priority" : preference <= 30 ? "speed priority" : "balanced";
-
-  const summary = `Route from ${answers.source} to ${answers.destination} with ${networkLabel}${telecom !== "all" ? ` on ${telecom.charAt(0).toUpperCase() + telecom.slice(1)}` : ""}.`;
+  const summary = `Optimising route from ${answers.source} to ${answers.destination} for ${mapped.label}${telecom !== "all" ? ` on ${telecom.charAt(0).toUpperCase() + telecom.slice(1)}` : ""}.`;
 
   return { source: answers.source, destination: answers.destination, preference, telecom, summary };
 }
@@ -193,49 +177,49 @@ export function ChatBot({ onClose, onApply, detectedNetwork }: Props) {
   const result = isComplete ? answersToParams(answers as ChatAnswers) : null;
 
   return (
-    <div className="flex flex-col h-full">
-      {/* Header with gradient */}
-      <div className="flex items-center gap-3 px-4 py-3 bg-gradient-to-r from-blue-500 to-cyan-500 shrink-0">
+    <div className="flex flex-col h-full bg-black">
+      {/* Header */}
+      <div className="flex items-center gap-3 px-4 py-3 bg-zinc-900 border-b border-white/10 shrink-0">
         <button
           type="button"
           onClick={onClose}
-          className="p-1 hover:bg-white/20 rounded-full cursor-pointer transition-colors"
+          className="p-1.5 hover:bg-slate-700 rounded-full cursor-pointer transition-colors"
         >
-          <ArrowLeft size={18} className="text-white" />
+          <ArrowLeft size={16} className="text-white/60" />
         </button>
-        <div className="w-8 h-8 rounded-full bg-white/20 flex items-center justify-center">
-          <Bot size={16} className="text-white" />
+        <div className="w-8 h-8 rounded-full bg-cyan-500/20 border border-cyan-500/30 flex items-center justify-center">
+          <Bot size={15} className="text-cyan-400" />
         </div>
         <div>
           <h3 className="text-sm font-semibold text-white">Route Assistant</h3>
           <div className="flex items-center gap-1">
-            <div className="w-1.5 h-1.5 rounded-full bg-green-300 animate-pulse" />
-            <span className="text-[10px] text-white/70">Online</span>
+            <div className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse" />
+            <span className="text-[10px] text-white/40">Online</span>
           </div>
         </div>
       </div>
 
-      {/* Messages with light grid background */}
-      <div ref={scrollRef} className="flex-1 overflow-y-auto px-4 py-4 space-y-3 light-grid-bg">
+      {/* Messages */}
+      <div ref={scrollRef} className="flex-1 overflow-y-auto px-4 py-4 space-y-3 bg-black">
         <AnimatePresence>
           {messages.map((msg, i) => (
             <motion.div
               key={i}
               initial={{ opacity: 0, y: 10, scale: 0.95 }}
               animate={{ opacity: 1, y: 0, scale: 1 }}
-              transition={{ duration: 0.25 }}
+              transition={{ duration: 0.22 }}
               className={`flex ${msg.role === "user" ? "justify-end" : "justify-start"}`}
             >
               {msg.role === "bot" && (
-                <div className="w-6 h-6 rounded-full bg-gradient-to-br from-blue-500 to-cyan-500 flex items-center justify-center mr-2 mt-1 shrink-0">
-                  <Sparkles size={12} className="text-white" />
+                <div className="w-6 h-6 rounded-full bg-cyan-500/20 border border-cyan-500/30 flex items-center justify-center mr-2 mt-1 shrink-0">
+                  <Sparkles size={11} className="text-cyan-400" />
                 </div>
               )}
               <div
-                className={`max-w-[80%] px-3.5 py-2.5 text-sm ${
+                className={`max-w-[80%] px-3.5 py-2.5 text-sm leading-relaxed ${
                   msg.role === "user"
-                    ? "bg-gradient-to-r from-blue-500 to-cyan-500 text-white rounded-2xl rounded-br-md shadow-md"
-                    : "bg-white text-gray-800 rounded-2xl rounded-bl-md shadow-sm border border-gray-100"
+                    ? "bg-cyan-500 text-white rounded-2xl rounded-br-md shadow-md shadow-cyan-500/20"
+                    : "bg-zinc-900 text-white/85 rounded-2xl rounded-bl-md border border-white/10"
                 }`}
               >
                 {msg.text}
@@ -251,14 +235,14 @@ export function ChatBot({ onClose, onApply, detectedNetwork }: Props) {
             animate={{ opacity: 1 }}
             className="flex items-center gap-2"
           >
-            <div className="w-6 h-6 rounded-full bg-gradient-to-br from-blue-500 to-cyan-500 flex items-center justify-center shrink-0">
-              <Sparkles size={12} className="text-white" />
+            <div className="w-6 h-6 rounded-full bg-cyan-500/20 border border-cyan-500/30 flex items-center justify-center shrink-0">
+              <Sparkles size={11} className="text-cyan-400" />
             </div>
-            <div className="bg-white rounded-2xl rounded-bl-md px-4 py-3 shadow-sm border border-gray-100">
+            <div className="bg-zinc-900 border border-white/10 rounded-2xl rounded-bl-md px-4 py-3">
               <div className="flex gap-1">
-                <div className="w-2 h-2 bg-gray-300 rounded-full animate-bounce" style={{ animationDelay: "0ms" }} />
-                <div className="w-2 h-2 bg-gray-300 rounded-full animate-bounce" style={{ animationDelay: "150ms" }} />
-                <div className="w-2 h-2 bg-gray-300 rounded-full animate-bounce" style={{ animationDelay: "300ms" }} />
+                <div className="w-2 h-2 bg-slate-500 rounded-full animate-bounce" style={{ animationDelay: "0ms" }} />
+                <div className="w-2 h-2 bg-slate-500 rounded-full animate-bounce" style={{ animationDelay: "150ms" }} />
+                <div className="w-2 h-2 bg-slate-500 rounded-full animate-bounce" style={{ animationDelay: "300ms" }} />
               </div>
             </div>
           </motion.div>
@@ -266,7 +250,7 @@ export function ChatBot({ onClose, onApply, detectedNetwork }: Props) {
       </div>
 
       {/* Options / Input */}
-      <div className="px-4 py-3 bg-white border-t border-gray-100 shrink-0">
+      <div className="px-4 py-3 bg-zinc-900 border-t border-white/10 shrink-0">
         {isComplete ? (
           <motion.button
             initial={{ opacity: 0, y: 5 }}
@@ -275,10 +259,10 @@ export function ChatBot({ onClose, onApply, detectedNetwork }: Props) {
             onClick={() => {
               if (result) onApply(result.source, result.destination, result.preference, result.telecom);
             }}
-            className="w-full py-3 bg-gradient-to-r from-blue-500 to-cyan-500 hover:from-blue-600 hover:to-cyan-600 text-white text-sm font-semibold rounded-xl cursor-pointer transition-all shadow-lg shadow-blue-500/20 flex items-center justify-center gap-2"
+            className="w-full py-3 bg-gradient-to-r from-cyan-500 to-blue-600 hover:from-cyan-400 hover:to-blue-500 text-white text-sm font-semibold rounded-xl cursor-pointer transition-all shadow-lg shadow-cyan-500/20 flex items-center justify-center gap-2"
           >
             <Sparkles size={16} />
-            Analyze & Find Route
+            Analyze &amp; Find Route
           </motion.button>
         ) : (
           <>
@@ -290,7 +274,7 @@ export function ChatBot({ onClose, onApply, detectedNetwork }: Props) {
                     key={opt}
                     type="button"
                     onClick={() => advanceStep(opt)}
-                    className="px-3 py-1.5 text-xs bg-gradient-to-r from-blue-50 to-cyan-50 hover:from-blue-100 hover:to-cyan-100 text-blue-700 rounded-full cursor-pointer transition-all border border-blue-100 hover:border-blue-200 hover:shadow-sm"
+                    className="px-3 py-1.5 text-xs bg-zinc-800 hover:bg-cyan-500/20 text-white/70 hover:text-cyan-300 rounded-lg cursor-pointer transition-all border border-white/10 hover:border-cyan-500/40"
                   >
                     {opt}
                   </button>
@@ -308,13 +292,13 @@ export function ChatBot({ onClose, onApply, detectedNetwork }: Props) {
                   if (e.key === "Enter") handleSend();
                 }}
                 placeholder={currentStepData.inputPlaceholder ?? "Type your answer..."}
-                className="flex-1 text-sm text-gray-800 placeholder-gray-400 outline-none bg-gray-50 px-4 py-2.5 rounded-xl border border-gray-100 focus:border-blue-300 focus:bg-white transition-all"
+                className="flex-1 text-sm text-white placeholder-white/30 outline-none bg-zinc-800 px-4 py-2.5 rounded-xl border border-white/10 focus:border-cyan-500/50 transition-all"
               />
               <button
                 type="button"
                 onClick={handleSend}
                 disabled={!inputValue.trim()}
-                className="p-2.5 bg-gradient-to-r from-blue-500 to-cyan-500 text-white rounded-xl cursor-pointer disabled:opacity-30 disabled:cursor-default transition-all hover:shadow-md"
+                className="p-2.5 bg-cyan-500 hover:bg-cyan-400 text-white rounded-xl cursor-pointer disabled:opacity-30 disabled:cursor-default transition-all"
               >
                 <Send size={16} />
               </button>
