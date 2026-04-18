@@ -1,15 +1,20 @@
+"""FastAPI application factory for the clean-architecture backend."""
+
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+
+from backend.api import health, routes
+from backend.app.lifecycle import lifespan
 from backend.core.config import settings
-from backend.api import routes, health
 
 app = FastAPI(
     title=settings.PROJECT_NAME,
     version=settings.VERSION,
-    openapi_url=f"{settings.API_V1_STR}/openapi.json"
+    openapi_url=f"{settings.API_V1_STR}/openapi.json",
+    lifespan=lifespan,
 )
 
-# Middleware
+# CORS
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -18,10 +23,16 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# Include routers
+# Routers
 app.include_router(health.router, prefix=settings.API_V1_STR, tags=["health"])
 app.include_router(routes.router, prefix=settings.API_V1_STR, tags=["routes"])
 
+
 @app.get("/")
-def root():
-    return {"message": "Welcome to SignalRoute API"}
+async def root():
+    return {
+        "service": settings.PROJECT_NAME,
+        "version": settings.VERSION,
+        "docs": f"{settings.API_V1_STR}/openapi.json",
+    }
+
