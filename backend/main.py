@@ -36,6 +36,7 @@ from model.explainability import explain_recommendation, compare_routes_summary
 from model.smart_preference import get_smart_preference
 from model.inference import predict_single
 from model.rl_learning import get_bandit
+from model.opencellid import get_towers, refresh_towers, load_real_towers
 from model.schemas import (
     AutoRouteRequest, AutoRouteResponse,
     RecordTripRequest, RecordTripResponse,
@@ -93,23 +94,25 @@ def _resolve_location(name: str) -> tuple[float, float]:
 
 
 # -----------------------------------------------------------------------
-# Tower data cache
+# Tower data cache (prefers real OpenCelliD data over synthetic)
 # -----------------------------------------------------------------------
 
 _cached_towers: pd.DataFrame | None = None
 
 
 def _get_towers() -> pd.DataFrame:
-    """Load trained tower data (cached)."""
+    """Load tower data (cached). Prefers real OpenCelliD data."""
     global _cached_towers
     if _cached_towers is not None:
         return _cached_towers
-    towers_path = DATA_DIR / "towers.csv"
-    if towers_path.exists():
-        _cached_towers = pd.read_csv(towers_path)
-    else:
-        _cached_towers = pd.DataFrame()
+    _cached_towers = get_towers(prefer_real=True)
     return _cached_towers
+
+
+def _invalidate_tower_cache():
+    """Clear the tower cache so next request reloads from disk."""
+    global _cached_towers
+    _cached_towers = None
 
 
 # -----------------------------------------------------------------------
@@ -373,6 +376,80 @@ def api_reroute(body: _RerouteBody):
             f"Signal drop detected ahead. "
             f"Switching to {best['name']} for better connectivity."
         ),
+    }
+
+
+# =======================================================================
+# TOWER DATA ENDPOINTS  (GET/PUT  --  /api/towers, /model/refresh-towers)
+# =======================================================================
+
+# -----------------------------------------------------------------------
+# GET /api/towers  (current tower data summary)
+# -----------------------------------------------------------------------
+
+@app.get("/api/towers")
+def api_towers():
+    """Return summary of loaded tower data."""
+    towers_df = _get_towers()
+    if towers_df.empty:
+        return {"source": "none", "count": 0, "operators": {}, "zones": {}}
+
+    real = load_real_towers()
+    source = "opencellid" if real is not None and len(real) > 0 else "synthetic"
+
+    ops = towers_df["operator"].value_counts().to_dict() if "operator" in towers_df.columns else {}
+    zones = towers_df["zone"].value_counts().to_dict() if "zone" in towers_df.columns else {}
+
+    result = {
+        "source": source,
+        "count": len(towers_df),
+        "operators": ops,
+        "zones": zones,
+    }
+
+    # Extra stats if real data
+    if source == "opencellid" and real is not None:
+        result["radio_types"] = real["radio"].value_counts().to_dict() if "radio" in real.columns else {}
+        result["towers_with_signal"] = int((real["avg_signal_dbm"] != 0).sum()) if "avg_signal_dbm" in real.columns else 0
+
+    return result
+
+
+# -----------------------------------------------------------------------
+# PUT /model/refresh-towers  (fetch fresh data from OpenCelliD)
+# -----------------------------------------------------------------------
+
+class _RefreshRequest(BaseModel):
+    max_per_zone: int = 50
+
+
+@app.put("/model/refresh-towers")
+def refresh_towers_endpoint(req: _RefreshRequest):
+    """Fetch fresh real tower data from OpenCelliD API.
+
+    This calls the OpenCelliD API for all 20 Bangalore zones and saves
+    the result to towers_real.csv. Subsequent requests will use real data.
+    Takes ~30-60 seconds depending on API response times.
+    """
+    df = refresh_towers(max_per_zone=req.max_per_zone)
+    _invalidate_tower_cache()
+
+    if len(df) == 0:
+        return {"status": "error", "message": "No towers fetched", "count": 0}
+
+    ops = df["operator"].value_counts().to_dict()
+    radios = df["radio"].value_counts().to_dict()
+    zones_count = df["zone"].nunique()
+    with_signal = int((df["avg_signal_dbm"] != 0).sum())
+
+    return {
+        "status": "ok",
+        "count": len(df),
+        "zones_covered": zones_count,
+        "operators": ops,
+        "radio_types": radios,
+        "towers_with_signal_data": with_signal,
+        "message": f"Fetched {len(df)} real towers across {zones_count} zones",
     }
 
 

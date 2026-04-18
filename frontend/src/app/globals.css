@@ -1,8 +1,8 @@
 @import "tailwindcss";
 
 :root {
-  --background: #050b16;
-  --foreground: #e2e8f0;
+  --background: #ffffff;
+  --foreground: #1f2937;
 }
 
 @theme inline {
@@ -15,28 +15,60 @@
 body {
   background: var(--background);
   color: var(--foreground);
-  font-family: var(--font-space-grotesk), sans-serif;
+  font-family: var(--font-space-grotesk), system-ui, sans-serif;
+  margin: 0;
+  padding: 0;
+  overflow: hidden;
 }
 
 * {
-  border-color: rgba(148, 163, 184, 0.22);
+  border-color: rgba(0, 0, 0, 0.08);
 }
 
 .leaflet-container {
-  background: #0b1323;
+  background: #f3f4f6;
 }
 
-@keyframes rise {
-  from {
-    opacity: 0;
-    transform: translateY(10px);
-  }
-  to {
-    opacity: 1;
-    transform: translateY(0);
-  }
+/* Tooltip styling */
+.zone-tooltip {
+  background: white !important;
+  border: 1px solid #e5e7eb !important;
+  border-radius: 8px !important;
+  padding: 6px 10px !important;
+  font-size: 12px !important;
+  color: #374151 !important;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.12) !important;
 }
 
-main > * {
-  animation: rise 380ms ease both;
+.zone-tooltip::before {
+  border-top-color: #e5e7eb !important;
+}
+
+/* Clean leaflet controls */
+.leaflet-control-zoom a {
+  background: white !important;
+  color: #4b5563 !important;
+  border-color: #e5e7eb !important;
+}
+
+.leaflet-control-zoom a:hover {
+  background: #f9fafb !important;
+}
+
+/* Range slider - Google style */
+input[type="range"] {
+  height: 4px;
+  border-radius: 2px;
+  appearance: none;
+  background: #e5e7eb;
+}
+
+input[type="range"]::-webkit-slider-thumb {
+  appearance: none;
+  width: 16px;
+  height: 16px;
+  border-radius: 50%;
+  background: #4285F4;
+  cursor: pointer;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.2);
 }

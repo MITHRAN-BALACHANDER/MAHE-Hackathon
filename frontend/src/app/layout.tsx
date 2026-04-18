@@ -1,6 +1,7 @@
 import type { Metadata } from "next";
 import { Space_Grotesk, Sora } from "next/font/google";
 import "./globals.css";
+import { QueryProvider } from "@/src/providers/QueryProvider";
 
 const spaceGrotesk = Space_Grotesk({
   variable: "--font-space-grotesk",
@@ -13,7 +14,7 @@ const sora = Sora({
 });
 
 export const metadata: Metadata = {
-  title: "SignalRoute AI",
+  title: "SignalRoute - Network-Aware Navigation",
   description:
     "Smart route recommendation balancing ETA and cellular connectivity.",
 };
@@ -28,7 +29,9 @@ export default function RootLayout({
       lang="en"
       className={`${spaceGrotesk.variable} ${sora.variable} h-full antialiased`}
     >
-      <body className="min-h-full flex flex-col">{children}</body>
+      <body className="h-full w-full overflow-hidden">
+        <QueryProvider>{children}</QueryProvider>
+      </body>
     </html>
   );
 }

@@ -56,3 +56,19 @@ export type RerouteResponse = {
   selected_route: RouteOption;
   advisory: string;
 };
+
+export type RouteQueryParams = {
+  source: string;
+  destination: string;
+  preference: number;
+  telecom: TelecomMode;
+};
+
+export type TowerSummary = {
+  source: string;
+  count: number;
+  operators: Record<string, number>;
+  zones: Record<string, number>;
+  radio_types?: Record<string, number>;
+  towers_with_signal?: number;
+};
