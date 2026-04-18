@@ -345,6 +345,58 @@ Once navigation starts, the system periodically re-evaluates the route based on 
 
 This handles post-departure incidents (accidents, tower outages) that were invisible at planning time.
 
+### Weather-Aware Signal Adjustment
+
+The system integrates the OpenWeather API to factor real-time weather conditions into signal predictions. Weather degrades RF propagation: heavy rain attenuates signals, fog reduces visibility (proxy for atmospheric moisture), and high winds can cause antenna sway.
+
+- **Module**: `backend/weather.py` calls OpenWeather Current Weather API
+- **Cache**: 10-minute TTL per ~1km grid cell (`round(lat,2), round(lng,2)`)
+- **Output**: A `weather_factor` (0.0-1.0) derived from the weather condition code. Clear sky = 1.0, light rain = 0.85, thunderstorm = 0.6
+- **Integration**: The weather factor multiplies into the signal prediction at route scoring time, penalising routes through areas with adverse weather
+- **Frontend**: A `WeatherBadge` component shows current conditions (icon, temperature, signal impact) overlaid on the map
+
+### Crowd/Traffic Congestion Persistence Tracking
+
+Beyond static signal scoring, the system tracks crowd/congestion patterns that affect tower load and signal quality:
+
+- **Module**: `backend/crowd_tracker.py` implements a grid-based congestion memory
+- **Grid resolution**: ~500m cells (coordinates rounded to `lat*200, lng*200`)
+- **Persistence**: Running average of congestion scores per cell. A cell becomes an "active alert" after the average exceeds a threshold for 5+ minutes
+- **Staleness**: Cells with no updates for 30 minutes are evicted automatically
+- **Seeding**: When routes are scored, their congestion data is recorded into the tracker
+- **Alert endpoint**: `GET /api/alerts` returns active congestion alerts near the user's position or along a specified path
+
+### Multi-Carrier Dead Zone Prediction
+
+The system predicts signal quality for all major carriers (Jio, Airtel, Vi, BSNL) independently at each point along a route, at any specified time of day. This is critical for users who can switch SIMs or have dual-SIM/eSIM devices.
+
+- **Module**: `backend/dead_zone_predictor.py`
+- **Function**: `predict_carrier_zones(path, towers_df, time_hour, weather_factor, speed_kmh)`
+- **Per-carrier scoring**: Each carrier's towers are filtered from the tower database. For each path point, distance-based signal strength is computed with the ResidualSignalNet model, weighted by time-of-day and weather factor
+- **Dead zone definition**: A segment where ALL carriers predict signal strength < 30 (on 0-100 scale)
+- **Output per route**: `carrier_dead_zones` (list of dead zone segments with coordinates, length, duration, area name, per-carrier signal levels) and `carrier_summary` (per-carrier average signal, minimum signal, count of weak segments)
+- **Dedicated endpoint**: `GET /api/dead-zones?source=...&destination=...&time_hour=14` returns full carrier-level analysis for trip planning at specific times
+- **Frontend**: Dead zone count is displayed as a toast warning when zones are detected
+
+### Call-Drop Avoidance Estimation
+
+The system computes how many potential call drops the recommended route avoids compared to alternatives:
+
+- **Function**: `estimate_call_drops_avoided(routes)` in `dead_zone_predictor.py`
+- **Method**: For each route, counts segments where `drop_probability > 0.5` (from the multi-task model). Compares the recommended route's count against the worst alternative
+- **Output**: `call_drop_stats` in the route response containing `drops_avoided`, `recommended_drops`, `worst_alternative_drops`, and a human-readable `message`
+- **Frontend**: A green badge displays the call-drop avoidance message when drops are avoided (e.g., "Recommended route avoids 3 potential call drops")
+
+### Offline Cache Pre-Download Alerts
+
+When the system detects an approaching dead zone during navigation, it proactively alerts the user to cache data before losing connectivity:
+
+- **Function**: `offline_cache_alerts(path, segment_signals, speed_kmh, ahead_minutes=5)` in `dead_zone_predictor.py`
+- **Lookahead**: Scans 5 minutes of travel distance ahead of the current position
+- **Trigger**: Fires when a dead zone (signal < 30 for 3+ consecutive segments) is within the lookahead window
+- **Alert content**: Includes time-to-zone, estimated duration in the zone, zone length, area name, and a pre-formatted message
+- **Frontend**: Offline alerts have highest toast priority, appearing as warnings with messages like "Dead zone in 2.3 min -- download maps & media now"
+
 ### Request Clustering (Route Result Cache)
 
 Backend implements a 30-second TTL cache for the `GET /api/routes` endpoint. The cache key is `(src_lat_3dp, src_lng_3dp, dst_lat_3dp, dst_lng_3dp, preference, telecom)` -- coordinates rounded to 3 decimal places (~100m). When multiple users request similar routes within 30 seconds (e.g. same bus stop to same office at rush hour), only the first request runs model inference; subsequent requests get the cached result instantly.
@@ -366,12 +418,15 @@ Backend implements a 30-second TTL cache for the `GET /api/routes` endpoint. The
 | GET | /api/reverse-geocode | Reverse geocode via Nominatim (lat/lng to place name) |
 | GET | /api/towers/geo | Individual tower positions for map rendering |
 | GET | /api/detect-network | ISP detection via external IP lookup |
+| GET | /api/weather | Live weather + signal impact for a lat/lng |
+| GET | /api/alerts | Congestion/crowd persistence alerts along a path |
+| GET | /api/dead-zones | Multi-carrier dead zone prediction at a specific time of day |
 
 ### Updated Endpoints
 
 | Method | Path | Change |
 |---|---|---|
-| GET | /api/routes | Added 30s request clustering cache, `cache_hit` field, TomTom integration, up to 7 routes |
+| GET | /api/routes | Added 30s request clustering cache, `cache_hit` field, TomTom integration, up to 7 routes. Now includes `weather`, `call_drop_stats`, per-route `carrier_dead_zones`, `carrier_summary`, and `offline_alerts` |
 | GET | /api/heatmap | Now uses OpenCelliD-enriched tower data for zone scoring |
 
 ---
@@ -382,7 +437,7 @@ Backend implements a 30-second TTL cache for the `GET /api/routes` endpoint. The
 - **user_id is client-supplied**: No authentication means any client can write to any user's RL profile. In production, derive user_id from a JWT sub claim.
 - **No input sanitisation on location names**: `_resolve_location()` does a `.lower().strip()` lookup against a fixed dict -- no SQL injection surface (no database), but arbitrary strings are accepted. Rate limiting recommended.
 - **Model weights are not signed**: The checkpoint `best_model.pt` is loaded with `torch.load(weights_map_location=device)`. In production, verify a SHA-256 checksum before loading.
-- **No secrets in code**: All configuration is in `model/config.py` with no API keys or credentials.
+- **No secrets in code**: API keys (TomTom, OpenCelliD, OpenWeather) are stored in `backend/.env` and loaded via `python-dotenv`. The `.env` file is excluded from version control.
 
 ---
 
@@ -452,6 +507,11 @@ The `docker-compose.yml` defines two services: `backend` (Python/FastAPI) and `f
 | VS Code | Primary IDE |
 | ngrok | External tunnel for demo |
 | Docker Compose | Containerised deployment |
+| TomTom Routing API | Road-snapped multi-alternative routing |
+| OpenCelliD | Real cell tower lat/lng data |
+| Nominatim | Forward/reverse geocoding |
+| OpenWeather API | Real-time weather conditions for signal adjustment |
+| httpx | Async HTTP client for external API calls |
 
 ---
 
@@ -465,7 +525,7 @@ The `docker-compose.yml` defines two services: `backend` (Python/FastAPI) and `f
 | Model parameters | 558,979 |
 | Training samples | 100,000 |
 | Synthetic towers | 500 (20 Bangalore zones) |
-| API endpoints | 11 (4 frontend + 7 model) |
+| API endpoints | 14 (7 frontend + 7 model) |
 | RL convergence | 3-5 trips to confident prediction |
 | Final training val_loss | 0.41014 (epoch 90 of 300, early stop) |
 
@@ -475,13 +535,14 @@ The RL system correctly differentiates two users driving the same route at diffe
 
 ## What You'd Improve Next
 
-1. **Real tower data**: Integrate TRAI tower registry or OpenCelliD for actual Bangalore cell tower coordinates, operators, and frequencies.
-2. **Road-snapped routing**: Replace interpolated paths with OSRM or Valhalla to get actual road-following paths and realistic ETAs.
+1. ~~**Real tower data**: Integrate TRAI tower registry or OpenCelliD for actual Bangalore cell tower coordinates, operators, and frequencies.~~ (Done -- OpenCelliD integrated)
+2. ~~**Road-snapped routing**: Replace interpolated paths with OSRM or Valhalla to get actual road-following paths and realistic ETAs.~~ (Done -- TomTom Routing API)
 3. **Live signal crowdsourcing**: Vehicles report observed signal at each GPS point; retrain the model online with streaming updates.
 4. **Distributed RL state**: Move bandit distributions from JSON files to Redis for multi-instance deployment.
 5. **Session-aware multi-user**: Instead of client-supplied user_id, use vehicle VIN + driving pattern clustering to automatically identify distinct drivers.
 6. **Heatmap caching**: Cache `GET /api/heatmap` with a 5-minute TTL since zone signal scores are quasi-static.
-7. **Weather API integration**: Replace the static `weather_factor` parameter with a live weather API call keyed on the route bounding box.
+7. ~~**Weather API integration**: Replace the static `weather_factor` parameter with a live weather API call keyed on the route bounding box.~~ (Done -- OpenWeather API)
+8. **Real-time carrier data**: Integrate carrier-specific APIs or crowdsourced signal maps (e.g., OpenSignal) for actual per-carrier signal measurements instead of synthetic predictions.
 
 ---
 

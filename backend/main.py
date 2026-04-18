@@ -10,8 +10,10 @@ Run:
 """
 
 import sys
+import json
 import random
 import asyncio
+import datetime
 import os
 import time as _time
 from pathlib import Path
@@ -54,6 +56,9 @@ from model.schemas import (
 from backend.routing.tomtom_client import TomTomClient
 from backend.routing.geocode import geocode_query, reverse_geocode_query
 from backend.db.base import MongoClient
+from backend import weather as _weather
+from backend import crowd_tracker as _crowd
+from backend import dead_zone_predictor as _dzp
 
 # Mount the auth router so /api/v1/login and /api/v1/register work
 from backend.api.routes import router as _auth_router
@@ -550,6 +555,15 @@ async def api_routes(
 
     route_dicts = await _generate_routes(src, dst)
 
+    # Fetch live weather for route midpoint (affects signal scoring)
+    mid_lat = (src[0] + dst[0]) / 2
+    mid_lng = (src[1] + dst[1]) / 2
+    weather_info = await _weather.get_weather(mid_lat, mid_lng)
+    weather_factor = weather_info["weather_factor"]
+
+    # Use actual current hour so temporal model features are accurate
+    now_hour = datetime.datetime.now().hour + datetime.datetime.now().minute / 60.0
+
     # Merge per-route live towers into one de-duplicated DataFrame for scoring
     towers_df = _merge_route_towers(route_dicts)
 
@@ -562,13 +576,27 @@ async def api_routes(
     ranked = rank_routes(
         route_dicts, towers_df,
         preference=preference, telecom=score_telecom,
-        time_hour=12.0, weather_factor=1.0, speed_kmh=40.0,
+        time_hour=now_hour, weather_factor=weather_factor, speed_kmh=40.0,
         max_eta_ratio=effective_max,
         include_multi_sim=include_multi_sim,
     )
 
-    results = []
+    # Seed crowd tracker so persistent congestion can be detected on later requests
+    _crowd.seed_from_routes(ranked, now_hour)
+
+    # Multi-carrier dead zone prediction for each route
+    carrier_results = []
     for r in ranked:
+        cz = _dzp.predict_carrier_zones(
+            r["path"], towers_df,
+            time_hour=now_hour,
+            weather_factor=weather_factor,
+            speed_kmh=40.0,
+        )
+        carrier_results.append(cz)
+
+    results = []
+    for r, cz in zip(ranked, carrier_results):
         conn = r.get("connectivity", {})
 
         # Detect bad zones along this route
@@ -612,9 +640,25 @@ async def api_routes(
         if r.get("multi_sim"):
             entry["multi_sim"] = r["multi_sim"]
 
+        # Per-carrier dead zones + offline cache alerts for this route
+        entry["carrier_dead_zones"] = cz.get("dead_zones", [])
+        entry["carrier_summary"] = {
+            op: {"avg": info["avg"], "min": info["min"], "weak_segments": info["weak_segments"]}
+            for op, info in cz.get("carriers", {}).items()
+        }
+        entry["offline_alerts"] = _dzp.offline_cache_alerts(
+            r["path"],
+            conn.get("segment_signals", []),
+            speed_kmh=40.0,
+        )
+
         results.append(entry)
 
     rec = results[0]["name"] if results else "None"
+
+    # Call-drop avoidance stats (recommended vs worst alternative)
+    drop_stats = _dzp.estimate_call_drops_avoided(ranked)
+
     response = {
         "source": source,
         "destination": destination,
@@ -622,6 +666,8 @@ async def api_routes(
         "max_eta_factor": effective_max,
         "routes": results,
         "recommended_route": rec,
+        "weather": weather_info,
+        "call_drop_stats": drop_stats,
         "cache_hit": False,
     }
     _route_cache_put(cache_key, response)
@@ -663,6 +709,107 @@ def api_heatmap():
         })
 
     return {"zones": zones}
+
+
+# -----------------------------------------------------------------------
+# GET /api/weather
+# -----------------------------------------------------------------------
+
+@app.get("/api/weather")
+async def api_weather(
+    lat: float = Query(..., ge=-90, le=90),
+    lng: float = Query(..., ge=-180, le=180),
+):
+    """Return current weather conditions and signal impact factor for (lat, lng)."""
+    return await _weather.get_weather(lat, lng)
+
+
+# -----------------------------------------------------------------------
+# GET /api/alerts
+# -----------------------------------------------------------------------
+
+@app.get("/api/alerts")
+async def api_alerts(
+    user_lat: float = Query(..., ge=-90, le=90),
+    user_lng: float = Query(..., ge=-180, le=180),
+    path: str = Query("[]", max_length=20_000,
+                      description="JSON-encoded [{lat,lng},...] upcoming route path"),
+):
+    """Return active congestion/crowd alerts relevant to the user's position.
+
+    Alerts are generated from persistent congestion events seeded by route
+    scoring.  Only events above threshold that have lasted >= 5 minutes are
+    returned.  On-route alerts with persist >= 8 min include a reroute
+    suggestion flag.
+    """
+    try:
+        path_list: list[dict] = json.loads(path)
+    except Exception:
+        path_list = []
+
+    alerts = _crowd.get_active_alerts(user_lat, user_lng, path_list)
+    return {"alerts": alerts, "count": len(alerts)}
+
+
+# -----------------------------------------------------------------------
+# GET /api/dead-zones
+# -----------------------------------------------------------------------
+
+@app.get("/api/dead-zones")
+async def api_dead_zones(
+    source: str = Query(..., max_length=200),
+    destination: str = Query(..., max_length=200),
+    time_hour: float = Query(-1, ge=-1, le=24,
+                             description="Hour of day (0-24). -1 = current time."),
+):
+    """Predict dead zones for ALL carriers along a route at a specific time.
+
+    Returns per-carrier signal quality, dead zones (where ALL carriers are
+    weak), and the best carrier for each path segment.  Useful for
+    planning trips at specific times.
+    """
+    src, dst = await asyncio.gather(
+        _resolve_location(source), _resolve_location(destination)
+    )
+    route_dicts = await _generate_routes(src, dst)
+    if not route_dicts:
+        raise HTTPException(404, "No route found")
+
+    towers_df = _merge_route_towers(route_dicts)
+
+    # Resolve time
+    if time_hour < 0:
+        import datetime as _dt
+        time_hour = _dt.datetime.now().hour + _dt.datetime.now().minute / 60.0
+
+    mid_lat = (src[0] + dst[0]) / 2
+    mid_lng = (src[1] + dst[1]) / 2
+    weather_info = await _weather.get_weather(mid_lat, mid_lng)
+
+    best_route = route_dicts[0]
+    cz = _dzp.predict_carrier_zones(
+        best_route["path"],
+        towers_df,
+        time_hour=time_hour,
+        weather_factor=weather_info["weather_factor"],
+        speed_kmh=40.0,
+    )
+
+    return {
+        "source": source,
+        "destination": destination,
+        "time_hour": round(time_hour, 1),
+        "weather": weather_info,
+        "route_name": best_route.get("name", ""),
+        "route_distance_km": best_route.get("distance", 0),
+        "carriers": {
+            op: {"avg": info["avg"], "min": info["min"], "weak_segments": info["weak_segments"]}
+            for op, info in cz.get("carriers", {}).items()
+        },
+        "dead_zones": cz.get("dead_zones", []),
+        "total_dead_zones": len(cz.get("dead_zones", [])),
+        "best_carrier_per_point": cz.get("best_carrier_per_point", []),
+    }
 
 
 # -----------------------------------------------------------------------

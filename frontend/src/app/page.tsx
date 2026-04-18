@@ -5,6 +5,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { ActionButtons } from "@/src/components/actions/ActionButtons";
 import { RouteBottomCard } from "@/src/components/common/RouteBottomCard";
 import { Toast } from "@/src/components/common/Toast";
+import { WeatherBadge } from "@/src/components/common/WeatherBadge";
 import { OnboardingTour } from "@/src/components/common/OnboardingTour";
 import { FilterPanel } from "@/src/components/filters/FilterPanel";
 import { MapContainer, type HeatmapFilterType } from "@/src/components/map/MapContainer";
@@ -14,8 +15,8 @@ import { useGeolocation } from "@/src/hooks/useGeolocation";
 import { useHeatmap, useReroute, useRoutes, useTowerMarkers } from "@/src/hooks/useMapData";
 import { useNetworkDetect } from "@/src/hooks/useNetworkDetect";
 import { useTracking } from "@/src/hooks/useTracking";
-import { offlineService, geocodeService, reverseGeocodeService, routeService } from "@/src/services/api";
-import type { TelecomMode } from "@/src/types/route";
+import { offlineService, geocodeService, reverseGeocodeService, routeService, alertsService } from "@/src/services/api";
+import type { TelecomMode, WeatherInfo, CallDropStats } from "@/src/types/route";
 
 export default function Home() {
   // Search state -- empty on load
@@ -40,6 +41,9 @@ export default function Home() {
   const [trackingActive, setTrackingActive] = useState(false);
   const [suggestedRoute, setSuggestedRoute] = useState<string>("");
   const [offlineReady, setOfflineReady] = useState(false);
+  const [alertToast, setAlertToast] = useState<string | null>(null);
+  const [weatherInfo, setWeatherInfo] = useState<WeatherInfo | null>(null);
+  const [callDropStats, setCallDropStats] = useState<CallDropStats | null>(null);
 
   // Geolocation
   const geo = useGeolocation();
@@ -156,10 +160,90 @@ export default function Home() {
     };
   }, [trackingActive, selectedRoute, trackingProgress, trackingPosition, destination, destCoords, preference, telecom, maxEtaFactor]);
 
-  // Toast message: reroute advisory OR bad zone warning
+  // -----------------------------------------------------------------------
+  // Congestion / crowd alert polling during active navigation
+  // -----------------------------------------------------------------------
+  // Polls /api/alerts every 30 s. When a persistent high-congestion event
+  // is detected on the route, a toast is shown and (if flagged) a reroute
+  // is triggered automatically.
+  const alertTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
+
+  useEffect(() => {
+    if (!trackingActive || !trackingPosition) {
+      if (alertTimerRef.current) {
+        clearInterval(alertTimerRef.current);
+        alertTimerRef.current = null;
+      }
+      return;
+    }
+
+    const checkAlerts = () => {
+      if (!trackingPosition) return;
+      const upcomingPath = selectedRoute?.path ?? [];
+      alertsService
+        .getAlerts(trackingPosition.lat, trackingPosition.lng, upcomingPath)
+        .then((res) => {
+          if (res.alerts.length === 0) {
+            setAlertToast(null);
+            return;
+          }
+          const top = res.alerts[0];
+          setAlertToast(top.message);
+          // Auto-trigger reroute for on-route high-severity persistent events
+          if (top.suggest_reroute && top.severity === "high" && !reroute.isPending) {
+            const src = `@${trackingPosition.lat},${trackingPosition.lng}`;
+            const dst = destCoords
+              ? `@${destCoords.lat},${destCoords.lng}`
+              : destination;
+            reroute.mutate({
+              source: src,
+              destination: dst,
+              current_zone: selectedRoute?.zones?.[0] ?? "",
+              preference: Math.min(preference + 20, 100),
+              telecom,
+            });
+          }
+        })
+        .catch(() => {});
+    };
+
+    checkAlerts();
+    alertTimerRef.current = setInterval(checkAlerts, 30_000);
+
+    return () => {
+      if (alertTimerRef.current) {
+        clearInterval(alertTimerRef.current);
+        alertTimerRef.current = null;
+      }
+    };
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [trackingActive, trackingPosition, selectedRoute]);
+
+  // Extract weather + call-drop stats from route response
+  useEffect(() => {
+    if (routeData?.weather) setWeatherInfo(routeData.weather);
+    if (routeData?.call_drop_stats) setCallDropStats(routeData.call_drop_stats);
+  }, [routeData]);
+
+  // Offline cache alert: warn user when a dead zone is approaching
+  const offlineAlert = selectedRoute?.offline_alerts?.[0]?.message ?? null;
+
+  // Dead zone warning from carrier-level prediction
+  const deadZoneCount = selectedRoute?.carrier_dead_zones?.length ?? 0;
+  const deadZoneWarning = deadZoneCount > 0
+    ? `${deadZoneCount} dead zone(s) ahead where all carriers are weak`
+    : null;
+
+  // Toast priority: offline alert > crowd alert > dead zone > reroute > bad zone
   const badZoneWarning = selectedRoute?.bad_zones?.[0]?.warning ?? null;
-  const toastMessage = reroute.data?.advisory ?? badZoneWarning;
-  const toastType = reroute.data ? ("reroute" as const) : ("info" as const);
+  const toastMessage =
+    offlineAlert ?? alertToast ?? deadZoneWarning ?? reroute.data?.advisory ?? badZoneWarning;
+  const toastType =
+    offlineAlert ? ("warning" as const)
+    : alertToast ? ("warning" as const)
+    : deadZoneWarning ? ("warning" as const)
+    : reroute.data ? ("reroute" as const)
+    : ("info" as const);
 
   // When geolocation resolves, reverse-geocode GPS coords to a readable name via Nominatim
   useEffect(() => {
@@ -331,6 +415,20 @@ export default function Home() {
         heatmapFilter={heatmapFilter}
         onHeatmapFilterChange={setHeatmapFilter}
       />
+
+      {/* Weather badge (top-right, below filter panel) */}
+      {weatherInfo && (
+        <div className="absolute top-52 right-4 z-[1000]">
+          <WeatherBadge weather={weatherInfo} />
+        </div>
+      )}
+
+      {/* Call-drop stats badge */}
+      {callDropStats && callDropStats.drops_avoided > 0 && (
+        <div className="absolute top-72 right-4 z-[1000] rounded-xl bg-green-50 px-3 py-2 shadow-md ring-1 ring-green-200 text-sm">
+          <p className="font-medium text-green-700">{callDropStats.message}</p>
+        </div>
+      )}
 
       {/* Route sidebar (left) */}
       <RouteSidebar

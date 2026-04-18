@@ -1,6 +1,7 @@
 import axios from "axios";
 
 import type {
+  CongestionAlert,
   HeatmapResponse,
   OfflineBundle,
   PredictionResponse,
@@ -11,6 +12,9 @@ import type {
   TowerSummary,
   TowerMarker,
   TowerMarkersResponse,
+  WeatherInfo,
+  CarrierSignalSummary,
+  CarrierDeadZone,
 } from "@/src/types/route";
 
 const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8001";
@@ -128,6 +132,78 @@ export const reverseGeocodeService = {
     try {
       const { data } = await client.get<GeocodeSuggestion>("/api/reverse-geocode", {
         params: { lat, lon },
+      });
+      return data;
+    } catch {
+      return null;
+    }
+  },
+};
+
+export const weatherService = {
+  async getWeather(lat: number, lng: number): Promise<WeatherInfo | null> {
+    try {
+      const { data } = await client.get<WeatherInfo>("/api/weather", {
+        params: { lat, lng },
+      });
+      return data;
+    } catch {
+      return null;
+    }
+  },
+};
+
+export const alertsService = {
+  async getAlerts(
+    userLat: number,
+    userLng: number,
+    path: Array<{ lat: number; lng: number }>,
+  ): Promise<{ alerts: CongestionAlert[]; count: number }> {
+    try {
+      // Sample path to keep URL small (max 25 points)
+      const sampled =
+        path.length <= 25
+          ? path
+          : path.filter((_, i) => i % Math.ceil(path.length / 25) === 0);
+      const { data } = await client.get<{ alerts: CongestionAlert[]; count: number }>(
+        "/api/alerts",
+        {
+          params: {
+            user_lat: userLat,
+            user_lng: userLng,
+            path: JSON.stringify(sampled),
+          },
+        },
+      );
+      return data;
+    } catch {
+      return { alerts: [], count: 0 };
+    }
+  },
+};
+
+export type DeadZoneResponse = {
+  source: string;
+  destination: string;
+  time_hour: number;
+  weather: WeatherInfo;
+  route_name: string;
+  route_distance_km: number;
+  carriers: Record<string, { avg: number; min: number; weak_segments: number }>;
+  dead_zones: CarrierDeadZone[];
+  total_dead_zones: number;
+  best_carrier_per_point: string[];
+};
+
+export const deadZoneService = {
+  async predict(
+    source: string,
+    destination: string,
+    timeHour = -1,
+  ): Promise<DeadZoneResponse | null> {
+    try {
+      const { data } = await client.get<DeadZoneResponse>("/api/dead-zones", {
+        params: { source, destination, time_hour: timeHour },
       });
       return data;
     } catch {

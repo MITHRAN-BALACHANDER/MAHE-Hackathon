@@ -51,6 +51,72 @@ export type RouteOption = {
   bad_zones?: BadZone[];
   // Multi-SIM
   multi_sim?: MultiSimInfo;
+  // Per-carrier dead zones
+  carrier_dead_zones?: CarrierDeadZone[];
+  carrier_summary?: Record<string, CarrierSignalSummary>;
+  // Offline cache alerts
+  offline_alerts?: OfflineCacheAlert[];
+};
+
+export type CarrierSignalSummary = {
+  avg: number;
+  min: number;
+  weak_segments: number;
+};
+
+export type CarrierDeadZone = {
+  start_coord: Coordinate;
+  end_coord: Coordinate;
+  length_km: number;
+  time_to_zone_min: number;
+  zone_duration_min: number;
+  best_signal_in_zone: number;
+  area: string;
+  carrier_signals: Record<string, number>;
+};
+
+export type OfflineCacheAlert = {
+  type: "offline_cache";
+  time_to_zone_min: number;
+  zone_duration_min: number;
+  length_km: number;
+  area: string;
+  message: string;
+};
+
+export type CallDropStats = {
+  drops_avoided: number;
+  recommended_drops: number;
+  worst_alternative_drops: number;
+  message: string;
+};
+
+export type WeatherInfo = {
+  condition: string;
+  description: string;
+  icon: string;
+  temperature_c: number;
+  humidity_pct: number;
+  wind_speed_ms: number;
+  visibility_m: number;
+  weather_factor: number;
+  signal_impact: string;
+  weather_id: number;
+};
+
+export type CongestionAlert = {
+  lat: number;
+  lng: number;
+  area: string;
+  type: string;
+  congestion_level: number;
+  crowd_level: number;
+  persist_minutes: number;
+  distance_km: number;
+  on_route: boolean;
+  severity: "high" | "medium";
+  message: string;
+  suggest_reroute: boolean;
 };
 
 export type RoutesResponse = {
@@ -61,6 +127,8 @@ export type RoutesResponse = {
   routes: RouteOption[];
   recommended_route: string;
   cache_hit?: boolean;
+  weather?: WeatherInfo;
+  call_drop_stats?: CallDropStats;
 };
 
 export type HeatmapZone = {
