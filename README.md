@@ -367,26 +367,35 @@ venv\Scripts\activate          # Windows
 pip install -r requirements.txt
 cp .env.example .env
 
-uvicorn main:app --reload --port 8000
+uvicorn main:app --reload --port 8001
 ```
 
-### 2. Frontend
+### 2. ML Model Server
+
+```bash
+cd model
+..\.venv\Scripts\python.exe run.py --serve --host 127.0.0.1 --port 8002
+# Linux/Mac: ../venv/bin/python run.py --serve --host 127.0.0.1 --port 8002
+```
+
+### 3. Frontend
 
 ```bash
 cd frontend
-pnpm install      # or: npm install
-pnpm dev          # or: npm run dev
+npm install
+npm run dev
 ```
 
-### 3. Docker (Both Services)
+### 4. Docker (All Services)
 
 ```bash
 docker compose up --build
 ```
 
 - Frontend: http://localhost:3000
-- Backend: http://localhost:8000
-- API Docs: http://localhost:8000/docs
+- Backend: http://localhost:8001
+- ML Model: http://localhost:8002
+- API Docs: http://localhost:8001/docs
 
 ## Testing
 
@@ -421,11 +430,83 @@ Full deployment guide: [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md)
 
 | Variable | Default | Description |
 |----------|---------|-------------|
-| `NEXT_PUBLIC_API_URL` | `http://localhost:8000` | Backend URL for frontend |
+| `NEXT_PUBLIC_API_URL` | `http://localhost:8001` | Backend URL for frontend |
 | `MONGO_URI` | `mongodb://localhost:27017` | MongoDB connection string |
 | `DB_NAME` | `signalroute` | Database name |
-| `MODEL_URL` | `http://localhost:8001` | ML prediction service |
-| `OSRM_URL` | `http://router.project-osrm.org` | OSRM routing engine |
+| `MODEL_URL` | `http://localhost:8002` | ML prediction service |
+| `OSRM_URL` | `http://router.project-osrm.org` | OSRM routing engine (fallback) |
+| `TOMTOM_API_KEY` | _(required)_ | TomTom Routing API key |
+| `TOMTOM_BASE_URL` | `https://api.tomtom.com` | TomTom API base URL |
+| `OPENCELLID_API_KEY` | _(required)_ | OpenCelliD cell tower API key |
+
+## Real-Time Data Sources
+
+### TomTom Routing API
+
+Used for road-snapped multi-route generation with live traffic.
+
+**Fields extracted per route:**
+
+| Field | Source | Description |
+|-------|--------|-------------|
+| `eta` | `summary.travelTimeInSeconds` | Travel time in minutes (includes traffic) |
+| `traffic_delay` | `summary.trafficDelayInSeconds` | Extra delay vs free-flow in minutes |
+| `geometry` | `legs[].points[].latitude/longitude` | Road-snapped path (430-824 points per route) |
+| `distance_km` | Computed from geometry | Haversine sum of consecutive points |
+
+**Additional fields available (not yet extracted):**
+
+| Field | Description |
+|-------|-------------|
+| `summary.lengthInMeters` | Exact road distance in meters |
+| `summary.departureTime` | Estimated departure time (ISO 8601) |
+| `summary.arrivalTime` | Estimated arrival time (ISO 8601) |
+| `summary.noTrafficTravelTimeInSeconds` | ETA with zero traffic (needs `computeTravelTimeFor=all`) |
+| `summary.historicTrafficTravelTimeInSeconds` | Historic average ETA |
+| `summary.liveTrafficIncidentsTravelTimeInSeconds` | Live incident-adjusted ETA |
+| Traffic sections: `simpleCategory` | Per-segment incident type: JAM, ROAD_WORK, ROAD_CLOSURE |
+| Traffic sections: `effectiveSpeedInKmh` | Speed through incident zone |
+| Traffic sections: `delayInSeconds` | Delay caused by each incident |
+| Traffic sections: `magnitudeOfDelay` | Severity: 0=unknown, 1=minor, 2=moderate, 3=major, 4=closure |
+
+---
+
+### OpenCelliD API
+
+Used for real-time cell tower lookup along each route path. Queried via `cell/getInArea` with a bounding box around sampled route points.
+
+**Raw fields returned per tower:**
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `lat`, `lon` | float | Tower coordinates |
+| `mcc` | int | Mobile Country Code (404 or 405 for India) |
+| `mnc` | int | Mobile Network Code (identifies carrier) |
+| `lac` | int | Location Area Code |
+| `cellid` | int | Unique cell tower ID |
+| `radio` | string | Technology: GSM, UMTS, LTE, NR, NBIOT |
+| `averageSignalStrength` | int (dBm) | Crowd-sourced avg signal (e.g. -70 to -105 dBm; 0 = no data) |
+| `range` | int (meters) | Estimated coverage radius |
+| `samples` | int | Number of crowd-sourced measurements (data quality) |
+| `changeable` | bool | `true` = position from measurements; `false` = operator-certified |
+| `tac` | int | Tracking Area Code (LTE/NR only) |
+| `rnc` | int | Radio Network Controller (UMTS only) |
+
+**Derived fields computed in `model/opencellid.py`:**
+
+| Field | Description |
+|-------|-------------|
+| `tower_id` | Composite key: `OCI_{mcc}_{mnc}_{cellid}` |
+| `operator` | Human name: Jio / Airtel / Vi / BSNL / Unknown (from MNC map) |
+| `signal_score` | 0-100 score converted from dBm using radio-type ranges |
+| `avg_signal_dbm` | Raw dBm value preserved from `averageSignalStrength` |
+| `range_m` | Coverage radius in meters (raw `range` value) |
+| `frequency_mhz` | Typical frequency: GSM=900, UMTS=2100, LTE=1800, NR=3500 |
+| `tx_power_dbm` | Typical TX power: GSM/UMTS=43 dBm, LTE=46 dBm, NR=49 dBm |
+| `height_m` | Typical tower height: GSM=35m, UMTS/LTE=30m, NR=25m |
+| `zone` | Bangalore zone name or `"route"` for path-fetched towers |
+
+---
 
 ## Documentation
 
