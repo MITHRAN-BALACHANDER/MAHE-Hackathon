@@ -1,6 +1,6 @@
 "use client";
 
-import { Filter, MessageCircle, X } from "lucide-react";
+import { Download, Filter, MessageCircle, X } from "lucide-react";
 import { useState } from "react";
 import type { TelecomMode } from "@/src/types/route";
 import { ChatBot } from "@/src/components/chat/ChatBot";
@@ -12,6 +12,10 @@ type Props = {
   onTelecomChange: (v: TelecomMode) => void;
   onChatApply?: (source: string, destination: string, preference: number, telecom: TelecomMode) => void;
   detectedNetwork: string;
+  maxEtaFactor?: number;
+  onMaxEtaFactorChange?: (v: number) => void;
+  onDownloadOffline?: () => void;
+  offlineReady?: boolean;
 };
 
 const PRESET_FILTERS = [
@@ -27,6 +31,10 @@ export function FilterPanel({
   onTelecomChange,
   onChatApply,
   detectedNetwork,
+  maxEtaFactor = 1.5,
+  onMaxEtaFactorChange,
+  onDownloadOffline,
+  offlineReady,
 }: Props) {
   const [open, setOpen] = useState(false);
   const [chatOpen, setChatOpen] = useState(false);
@@ -105,6 +113,29 @@ export function FilterPanel({
             ))}
           </div>
 
+          {/* ETA Constraint */}
+          {onMaxEtaFactorChange && (
+            <div className="mb-4">
+              <label className="text-xs font-medium text-gray-600 mb-1 block">
+                Max ETA Limit: {maxEtaFactor === 0 ? "None" : `${Math.round(maxEtaFactor * 100)}% of fastest`}
+              </label>
+              <input
+                type="range"
+                min={0}
+                max={3}
+                step={0.1}
+                value={maxEtaFactor}
+                onChange={(e) => onMaxEtaFactorChange(parseFloat(e.target.value))}
+                className="w-full h-1.5 bg-gray-200 rounded-lg appearance-none cursor-pointer accent-blue-500"
+              />
+              <div className="flex justify-between text-[10px] text-gray-400 mt-0.5">
+                <span>No limit</span>
+                <span>1.5x</span>
+                <span>3x</span>
+              </div>
+            </div>
+          )}
+
           {/* Detected network info */}
           {detectedNetwork && detectedNetwork !== "unknown" && (
             <div className="mb-4 px-3 py-2 bg-blue-50 rounded-lg">
@@ -115,7 +146,7 @@ export function FilterPanel({
           )}
 
           {/* Telecom */}
-          <div>
+          <div className="mb-4">
             <label className="text-xs font-medium text-gray-600 mb-2 block">
               Network Provider
             </label>
@@ -125,6 +156,7 @@ export function FilterPanel({
                 { value: "jio" as TelecomMode, label: "Jio" },
                 { value: "airtel" as TelecomMode, label: "Airtel" },
                 { value: "vi" as TelecomMode, label: "Vi" },
+                { value: "multi" as TelecomMode, label: "Multi-SIM" },
               ]).map((opt) => (
                 <button
                   key={opt.value}
@@ -141,6 +173,22 @@ export function FilterPanel({
               ))}
             </div>
           </div>
+
+          {/* Download for Offline */}
+          {onDownloadOffline && (
+            <button
+              type="button"
+              onClick={onDownloadOffline}
+              className={`w-full text-xs py-2.5 rounded-lg font-medium cursor-pointer transition-colors flex items-center justify-center gap-2 ${
+                offlineReady
+                  ? "bg-green-100 text-green-700"
+                  : "bg-gray-100 text-gray-600 hover:bg-gray-200"
+              }`}
+            >
+              <Download size={14} />
+              {offlineReady ? "Offline Data Ready" : "Download for Offline"}
+            </button>
+          )}
         </div>
       )}
     </div>

@@ -24,6 +24,10 @@ from backend.services.scoring_service import (
     compute_drop_probability,
     compute_final_score,
     compute_signal_score,
+    compute_signal_variance,
+    compute_continuity_score,
+    compute_longest_stable_window,
+    compute_stability_score,
     normalize_eta,
 )
 from backend.services.signal_client import SignalClient
@@ -146,17 +150,56 @@ class TestScoringService:
         assert normalize_eta(100, [100, 100]) == 1.0
 
     def test_final_score_pure_signal(self):
-        score = compute_final_score(weight=1.0, signal_score=80.0, eta_score=0.2)
-        assert abs(score - 0.8) < 1e-9
+        score = compute_final_score(weight=1.0, signal_score=80.0, eta_score=0.2, stability_score=50.0)
+        # weight * sig_norm + (1-weight) * eta + stability_bonus
+        # 1.0 * 0.8 + 0.0 * 0.2 + (50/100)*0.1*1.0 = 0.8 + 0.05 = 0.85
+        assert abs(score - 0.85) < 1e-9
 
     def test_final_score_pure_speed(self):
-        score = compute_final_score(weight=0.0, signal_score=80.0, eta_score=0.9)
+        score = compute_final_score(weight=0.0, signal_score=80.0, eta_score=0.9, stability_score=50.0)
+        # 0.0 * 0.8 + 1.0 * 0.9 + 0 = 0.9 (no stability bonus when weight=0)
         assert abs(score - 0.9) < 1e-9
 
     def test_final_score_balanced(self):
-        score = compute_final_score(weight=0.5, signal_score=60.0, eta_score=0.8)
-        expected = 0.5 * 0.6 + 0.5 * 0.8  # 0.3 + 0.4 = 0.7
+        score = compute_final_score(weight=0.5, signal_score=60.0, eta_score=0.8, stability_score=50.0)
+        # 0.5 * 0.6 + 0.5 * 0.8 + (50/100)*0.1*0.5 = 0.3 + 0.4 + 0.025 = 0.725
+        expected = 0.5 * 0.6 + 0.5 * 0.8 + 0.5 * 0.1 * 0.5
         assert abs(score - expected) < 1e-9
+
+    def test_signal_variance(self):
+        preds = [
+            SignalPrediction(signal_strength=80, drop_probability=0.1),
+            SignalPrediction(signal_strength=60, drop_probability=0.2),
+        ]
+        var = compute_signal_variance(preds)
+        # mean=70, var = ((80-70)^2 + (60-70)^2) / 2 = 100
+        assert abs(var - 100.0) < 1e-9
+
+    def test_continuity_score(self):
+        preds = [
+            SignalPrediction(signal_strength=70, drop_probability=0.1),
+            SignalPrediction(signal_strength=70, drop_probability=0.1),
+        ]
+        # std = 0, continuity = 100
+        assert compute_continuity_score(preds) == 100.0
+
+    def test_longest_stable_window(self):
+        preds = [
+            SignalPrediction(signal_strength=60, drop_probability=0.1),
+            SignalPrediction(signal_strength=30, drop_probability=0.5),
+            SignalPrediction(signal_strength=55, drop_probability=0.1),
+            SignalPrediction(signal_strength=70, drop_probability=0.05),
+            SignalPrediction(signal_strength=80, drop_probability=0.02),
+        ]
+        assert compute_longest_stable_window(preds) == 3
+
+    def test_stability_score(self):
+        preds = [
+            SignalPrediction(signal_strength=70, drop_probability=0.1),
+            SignalPrediction(signal_strength=70, drop_probability=0.1),
+        ]
+        # continuity=100, stable_fraction=1.0 -> stability=100
+        assert compute_stability_score(preds) == 100.0
 
 
 # ---------------------------------------------------------------------------

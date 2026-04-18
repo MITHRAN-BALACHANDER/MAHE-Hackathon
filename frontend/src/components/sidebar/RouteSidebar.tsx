@@ -1,6 +1,6 @@
 "use client";
 
-import { ChevronLeft, Clock, MapPin, Navigation, Signal } from "lucide-react";
+import { AlertTriangle, ChevronLeft, Clock, MapPin, Navigation, Signal, Shield, Wifi } from "lucide-react";
 import type { RouteOption } from "@/src/types/route";
 
 type Props = {
@@ -17,6 +17,13 @@ function signalBadge(score: number) {
   if (score >= 70) return { label: "Strong", color: "bg-green-100 text-green-700" };
   if (score >= 40) return { label: "Medium", color: "bg-yellow-100 text-yellow-700" };
   return { label: "Weak", color: "bg-red-100 text-red-700" };
+}
+
+function stabilityLabel(score: number | undefined) {
+  if (score === undefined) return null;
+  if (score >= 70) return { label: "Stable", color: "text-green-600" };
+  if (score >= 40) return { label: "Variable", color: "text-yellow-600" };
+  return { label: "Unstable", color: "text-red-600" };
 }
 
 export function RouteSidebar({
@@ -51,9 +58,12 @@ export function RouteSidebar({
       <div className="flex-1 overflow-y-auto">
         {routes.map((route, i) => {
           const isSelected = i === selectedIndex;
-          const isRecommended = route.name === recommendedRoute;
           const isSuggested = route.name === suggestedRoute;
           const badge = signalBadge(route.signal_score);
+          const stability = stabilityLabel(route.stability_score);
+          const isRejected = route.rejected === true;
+          const hasBadZones = (route.bad_zones?.length ?? 0) > 0;
+          const hasMultiSim = !!route.multi_sim;
 
           return (
             <button
@@ -61,7 +71,9 @@ export function RouteSidebar({
               type="button"
               onClick={() => onSelect(i)}
               className={`w-full text-left px-4 py-4 border-b border-gray-50 cursor-pointer transition-colors ${
-                isSelected
+                isRejected
+                  ? "bg-red-50/50 border-l-4 border-l-red-300 opacity-70"
+                  : isSelected
                   ? "bg-blue-50 border-l-4 border-l-blue-500"
                   : "hover:bg-gray-50 border-l-4 border-l-transparent"
               }`}
@@ -74,11 +86,16 @@ export function RouteSidebar({
                 />
                 <span
                   className={`text-sm font-medium ${
-                    isSelected ? "text-blue-700" : "text-gray-800"
+                    isRejected ? "text-red-500 line-through" : isSelected ? "text-blue-700" : "text-gray-800"
                   }`}
                 >
                   {route.name}
                 </span>
+                {isRejected && (
+                  <span className="text-[10px] font-semibold bg-red-100 text-red-600 px-1.5 py-0.5 rounded-full">
+                    Too Slow
+                  </span>
+                )}
                 {isSuggested && (
                   <span className="text-[10px] font-semibold bg-green-500 text-white px-1.5 py-0.5 rounded-full">
                     Suggested
@@ -87,7 +104,7 @@ export function RouteSidebar({
               </div>
 
               {/* Stats row */}
-              <div className="flex items-center gap-4 text-xs text-gray-500">
+              <div className="flex items-center gap-3 text-xs text-gray-500">
                 <span className="flex items-center gap-1">
                   <Clock size={12} />
                   {route.eta} min
@@ -103,6 +120,56 @@ export function RouteSidebar({
                   {badge.label} {Math.round(route.signal_score)}
                 </span>
               </div>
+
+              {/* Stability row */}
+              {stability && (
+                <div className="flex items-center gap-3 mt-1.5 text-xs">
+                  <span className={`flex items-center gap-1 ${stability.color}`}>
+                    <Shield size={10} />
+                    {stability.label} (score: {Math.round(route.stability_score ?? 0)})
+                  </span>
+                  {route.longest_stable_window !== undefined && route.longest_stable_window > 0 && (
+                    <span className="text-gray-400">
+                      {route.longest_stable_window} stable segments
+                    </span>
+                  )}
+                </div>
+              )}
+
+              {/* Multi-SIM info */}
+              {hasMultiSim && route.multi_sim && (
+                <div className="mt-1.5 px-2 py-1 bg-purple-50 rounded text-[10px] text-purple-700 flex items-center gap-1.5">
+                  <Wifi size={10} />
+                  Best carrier: <span className="font-semibold">{route.multi_sim.best_carrier}</span>
+                  <span className="text-purple-500 ml-1">
+                    (signal {route.multi_sim.combined_avg_signal})
+                  </span>
+                </div>
+              )}
+
+              {/* Bad zone warnings */}
+              {hasBadZones && (
+                <div className="mt-1.5 space-y-0.5">
+                  {route.bad_zones!.slice(0, 2).map((bz, j) => (
+                    <div
+                      key={j}
+                      className="flex items-start gap-1 text-[10px] text-orange-600 bg-orange-50 px-2 py-1 rounded"
+                    >
+                      <AlertTriangle size={10} className="mt-0.5 shrink-0" />
+                      <span>
+                        Dead zone in ~{Math.round(bz.time_to_zone_min)} min
+                        ({bz.length_km} km, ~{bz.zone_duration_min.toFixed(1)} min)
+                        {bz.edge_zone_name ? ` -- ${bz.edge_zone_name}` : ""}
+                      </span>
+                    </div>
+                  ))}
+                  {(route.bad_zones?.length ?? 0) > 2 && (
+                    <span className="text-[10px] text-orange-500 pl-2">
+                      +{(route.bad_zones?.length ?? 0) - 2} more zones
+                    </span>
+                  )}
+                </div>
+              )}
 
               {/* Zones */}
               <div className="mt-2 flex flex-wrap gap-1">

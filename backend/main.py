@@ -208,22 +208,47 @@ def api_routes(
     destination: str = Query("Airport"),
     preference: float = Query(50),
     telecom: str = Query("all"),
+    max_eta_factor: float = Query(1.5),
 ):
-    """Score routes between two named locations."""
+    """Score routes between two named locations.
+
+    Parameters
+    ----------
+    max_eta_factor : hard constraint -- reject routes with ETA > fastest * ratio.
+                     Default 1.5 (50% slower than fastest). Set 0 to disable.
+    telecom : "all", "jio", "airtel", "vi", or "multi" for multi-SIM optimization.
+    """
     src = _resolve_location(source)
     dst = _resolve_location(destination)
     towers_df = _get_towers()
     route_dicts = _generate_routes(src, dst)
 
+    # If max_eta_factor is 0 or negative, disable hard constraint
+    effective_max = max_eta_factor if max_eta_factor > 0 else 999.0
+
+    include_multi_sim = telecom.lower() == "multi"
+    score_telecom = "all" if include_multi_sim else telecom
+
     ranked = rank_routes(
         route_dicts, towers_df,
-        preference=preference, telecom=telecom,
+        preference=preference, telecom=score_telecom,
         time_hour=12.0, weather_factor=1.0, speed_kmh=40.0,
+        max_eta_ratio=effective_max,
+        include_multi_sim=include_multi_sim,
     )
 
     results = []
     for r in ranked:
-        results.append({
+        conn = r.get("connectivity", {})
+
+        # Detect bad zones along this route
+        bad_zones = detect_bad_zones(
+            r["path"],
+            conn.get("segment_signals", []),
+            avg_speed_kmh=40.0,
+        )
+
+        entry = {
             "name": r["name"],
             "eta": r["eta"],
             "distance": r["distance"],
@@ -231,13 +256,40 @@ def api_routes(
             "weighted_score": r.get("weighted_score", 0),
             "zones": r.get("zones", []),
             "path": r["path"],
-        })
+            "rejected": r.get("rejected", False),
+            # Stability metrics
+            "stability_score": r.get("stability_score", 50),
+            "continuity_score": r.get("continuity_score", 50),
+            "signal_variance": r.get("signal_variance", 0),
+            "longest_stable_window": r.get("longest_stable_window", 0),
+            # Bad zone predictions
+            "bad_zones": [
+                {
+                    "start_coord": bz["start_coord"],
+                    "end_coord": bz["end_coord"],
+                    "length_km": bz["length_km"],
+                    "min_signal": bz["min_signal"],
+                    "time_to_zone_min": bz["time_to_zone_min"],
+                    "zone_duration_min": bz["zone_duration_min"],
+                    "edge_zone_name": bz.get("edge_zone_name"),
+                    "warning": bz["warning"],
+                }
+                for bz in bad_zones
+            ],
+        }
+
+        # Multi-SIM data
+        if r.get("multi_sim"):
+            entry["multi_sim"] = r["multi_sim"]
+
+        results.append(entry)
 
     rec = results[0]["name"] if results else "None"
     return {
         "source": source,
         "destination": destination,
         "preference": preference,
+        "max_eta_factor": effective_max,
         "routes": results,
         "recommended_route": rec,
     }
@@ -645,6 +697,96 @@ def user_patterns_endpoint(req: UserPatternsRequest):
         trip_count=bandit.trip_count,
         patterns=[PatternInfo(**p) for p in patterns],
     )
+
+
+# =======================================================================
+# OFFLINE BUNDLE  (GET  --  /api/offline-bundle)
+# =======================================================================
+
+@app.get("/api/offline-bundle")
+def api_offline_bundle(
+    source: str = Query("MIT"),
+    destination: str = Query("Airport"),
+    preference: float = Query(50),
+    telecom: str = Query("all"),
+):
+    """Pre-computed bundle for offline navigation.
+
+    Returns full route data, bad zone predictions, heatmap, and signal
+    predictions that can be cached client-side for use without connectivity.
+    """
+    src = _resolve_location(source)
+    dst = _resolve_location(destination)
+    towers_df = _get_towers()
+    route_dicts = _generate_routes(src, dst)
+
+    ranked = rank_routes(
+        route_dicts, towers_df,
+        preference=preference, telecom=telecom if telecom != "multi" else "all",
+        time_hour=12.0, weather_factor=1.0, speed_kmh=40.0,
+        include_multi_sim=telecom.lower() == "multi",
+    )
+
+    routes_bundle = []
+    for r in ranked:
+        conn = r.get("connectivity", {})
+        bad_zones = detect_bad_zones(
+            r["path"],
+            conn.get("segment_signals", []),
+            avg_speed_kmh=40.0,
+        )
+        routes_bundle.append({
+            "name": r["name"],
+            "eta": r["eta"],
+            "distance": r["distance"],
+            "signal_score": r.get("signal_score", 0),
+            "weighted_score": r.get("weighted_score", 0),
+            "zones": r.get("zones", []),
+            "path": r["path"],
+            "rejected": r.get("rejected", False),
+            "stability_score": r.get("stability_score", 50),
+            "continuity_score": r.get("continuity_score", 50),
+            "signal_variance": r.get("signal_variance", 0),
+            "segment_signals": conn.get("segment_signals", []),
+            "segment_colors": conn.get("segment_colors", []),
+            "bad_zones": [
+                {
+                    "start_coord": bz["start_coord"],
+                    "end_coord": bz["end_coord"],
+                    "length_km": bz["length_km"],
+                    "min_signal": bz["min_signal"],
+                    "time_to_zone_min": bz["time_to_zone_min"],
+                    "zone_duration_min": bz["zone_duration_min"],
+                    "warning": bz["warning"],
+                }
+                for bz in bad_zones
+            ],
+        })
+
+    # Heatmap snapshot
+    heatmap = []
+    for name, info in ZONES.items():
+        lat, lng = info["center"]
+        try:
+            feats = extract_features(lat, lng, towers_df, 12.0, 1.0, 40.0)
+            result = predict_single(feats)
+            score = result["signal_strength"]
+        except Exception:
+            score = 50.0
+        heatmap.append({
+            "name": name, "lat": lat, "lng": lng,
+            "score": round(score, 1),
+        })
+
+    import time as _time
+    return {
+        "source": source,
+        "destination": destination,
+        "generated_at": int(_time.time()),
+        "routes": routes_bundle,
+        "heatmap": heatmap,
+        "offline": True,
+    }
 
 
 # =======================================================================

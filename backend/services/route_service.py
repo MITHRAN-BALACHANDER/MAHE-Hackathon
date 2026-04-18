@@ -11,6 +11,7 @@ from backend.services.scoring_service import (
     compute_drop_probability,
     compute_final_score,
     compute_signal_score,
+    compute_stability_score,
     normalize_eta,
 )
 from backend.services.signal_client import SignalClient
@@ -77,7 +78,10 @@ class RouteService:
             signal_score = compute_signal_score(predictions)
             drop_prob = compute_drop_probability(predictions)
             eta_score = normalize_eta(candidate.eta_seconds, all_etas)
-            final_score = compute_final_score(effective_weight, signal_score, eta_score)
+            stability = compute_stability_score(predictions)
+            final_score = compute_final_score(
+                effective_weight, signal_score, eta_score, stability,
+            )
 
             geometry = [
                 RouteGeometryPoint(lat=lat, lon=lon)
