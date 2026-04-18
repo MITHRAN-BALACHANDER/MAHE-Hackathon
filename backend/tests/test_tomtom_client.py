@@ -236,8 +236,8 @@ class TestGeometryParsing:
 
         first = routes[0]
         assert len(first.geometry) == 4
-        assert first.geometry[0] == {"lat": 12.9716, "lon": 77.5946}
-        assert first.geometry[-1] == {"lat": 12.8399, "lon": 77.6670}
+        assert first.geometry[0] == {"lat": 12.9716, "lng": 77.5946}
+        assert first.geometry[-1] == {"lat": 12.8399, "lng": 77.6670}
 
     def test_parse_routes_multi_leg(self):
         data = {
@@ -338,9 +338,9 @@ class TestMockFallback:
         routes = _generate_mock_routes(ORIGIN, DESTINATION)
         for r in routes:
             assert r.geometry[0]["lat"] == ORIGIN[0]
-            assert r.geometry[0]["lon"] == ORIGIN[1]
+            assert r.geometry[0]["lng"] == ORIGIN[1]
             assert r.geometry[-1]["lat"] == DESTINATION[0]
-            assert r.geometry[-1]["lon"] == DESTINATION[1]
+            assert r.geometry[-1]["lng"] == DESTINATION[1]
 
     def test_second_route_slower(self):
         routes = _generate_mock_routes(ORIGIN, DESTINATION)

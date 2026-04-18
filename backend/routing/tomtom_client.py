@@ -26,7 +26,7 @@ class TomTomRoute:
     """Parsed route returned by TomTom."""
 
     eta: float  # minutes
-    geometry: list[dict[str, float]]  # [{"lat": ..., "lon": ...}, ...]
+    geometry: list[dict[str, float]]  # [{"lat": ..., "lng": ...}, ...]
     traffic_delay: float  # minutes
 
 
@@ -42,7 +42,7 @@ def _parse_routes(data: dict) -> list[TomTomRoute]:
         for leg in route.get("legs", []):
             for pt in leg.get("points", []):
                 points.append(
-                    {"lat": pt["latitude"], "lon": pt["longitude"]}
+                    {"lat": pt["latitude"], "lng": pt["longitude"]}
                 )
 
         routes.append(
@@ -74,9 +74,9 @@ def _generate_mock_routes(
     route_a = TomTomRoute(
         eta=round(base_eta, 2),
         geometry=[
-            {"lat": o_lat, "lon": o_lon},
-            {"lat": mid_lat, "lon": mid_lon},
-            {"lat": d_lat, "lon": d_lon},
+            {"lat": o_lat, "lng": o_lon},
+            {"lat": mid_lat, "lng": mid_lon},
+            {"lat": d_lat, "lng": d_lon},
         ],
         traffic_delay=round(base_eta * 0.1, 2),
     )
@@ -84,10 +84,10 @@ def _generate_mock_routes(
     route_b = TomTomRoute(
         eta=round(base_eta * 1.15, 2),
         geometry=[
-            {"lat": o_lat, "lon": o_lon},
-            {"lat": mid_lat + 0.008, "lon": mid_lon - 0.005},
-            {"lat": mid_lat - 0.003, "lon": mid_lon + 0.006},
-            {"lat": d_lat, "lon": d_lon},
+            {"lat": o_lat, "lng": o_lon},
+            {"lat": mid_lat + 0.008, "lng": mid_lon - 0.005},
+            {"lat": mid_lat - 0.003, "lng": mid_lon + 0.006},
+            {"lat": d_lat, "lng": d_lon},
         ],
         traffic_delay=round(base_eta * 0.18, 2),
     )

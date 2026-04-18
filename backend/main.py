@@ -11,9 +11,15 @@ Run:
 
 import sys
 import random
+import asyncio
+import os
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+
+from dotenv import load_dotenv
+
+load_dotenv(Path(__file__).resolve().parent.parent / ".env")
 
 import pandas as pd
 from fastapi import FastAPI, Query
@@ -44,11 +50,31 @@ from model.schemas import (
     RouteResult, BadZone, TaskFeasibility,
     RLInfo, PatternInfo,
 )
+from backend.routing.tomtom_client import TomTomClient
 
 # Update app metadata for the full backend
 app.title = "SignalRoute Backend"
 app.description = "Cellular network-aware routing with reinforcement learning"
 app.version = "2.0.0"
+
+# -----------------------------------------------------------------------
+# TomTom routing client (shared instance with connection reuse)
+# -----------------------------------------------------------------------
+
+_tomtom = TomTomClient(
+    api_key=os.getenv("TOMTOM_API_KEY", ""),
+    base_url=os.getenv("TOMTOM_BASE_URL", "https://api.tomtom.com"),
+)
+
+
+@app.on_event("startup")
+async def _startup_tomtom():
+    await _tomtom.startup()
+
+
+@app.on_event("shutdown")
+async def _shutdown_tomtom():
+    await _tomtom.shutdown()
 
 
 # -----------------------------------------------------------------------
@@ -138,13 +164,27 @@ def _build_path(
     return path
 
 
-def _generate_routes(
+def _zones_along_path(path: list[dict]) -> list[str]:
+    """Identify ZONES that the path passes through."""
+    zone_names = []
+    seen = set()
+    for pt in path[::max(1, len(path) // 10)]:  # sample ~10 points
+        for name, info in ZONES.items():
+            if name in seen:
+                continue
+            c = info["center"]
+            if haversine(pt["lat"], pt["lng"], c[0], c[1]) < 3.0:  # within 3 km
+                zone_names.append(name)
+                seen.add(name)
+    return zone_names
+
+
+def _generate_routes_sync(
     src: tuple[float, float], dst: tuple[float, float],
 ) -> list[dict]:
-    """Generate 3 route variants (fastest, balanced, best-signal)."""
+    """Synthetic fallback routes (straight-line interpolation)."""
     total_dist = haversine(src[0], src[1], dst[0], dst[1])
 
-    # Find zones roughly between source and destination
     candidates = []
     for name, info in ZONES.items():
         c = info["center"]
@@ -156,7 +196,6 @@ def _generate_routes(
 
     routes = []
 
-    # Fastest Route: most direct (1-2 waypoints)
     fast_via = [c[1] for c in candidates[:2]]
     fast_dist = total_dist * 1.1
     routes.append({
@@ -167,7 +206,6 @@ def _generate_routes(
         "zones": [c[0] for c in candidates[:2]],
     })
 
-    # Balanced Route: moderate path (2-4 waypoints)
     bal_via = [c[1] for c in candidates[:4]]
     bal_dist = total_dist * 1.25
     routes.append({
@@ -178,7 +216,6 @@ def _generate_routes(
         "zones": [c[0] for c in candidates[:4]],
     })
 
-    # Best Signal Route: prefer high-density zones
     sig_cands = sorted(candidates, key=lambda x: 0 if x[3] == "high" else 1)
     sig_sorted = sorted(sig_cands[:5], key=lambda x: x[2])
     sig_via = [c[1] for c in sig_sorted]
@@ -194,6 +231,54 @@ def _generate_routes(
     return routes
 
 
+_ROUTE_NAMES = ["Fastest Route", "Balanced Route", "Best Signal Route"]
+
+
+async def _generate_routes(
+    src: tuple[float, float], dst: tuple[float, float],
+) -> list[dict]:
+    """Fetch road-snapped routes from TomTom, fall back to synthetic."""
+    if not _tomtom._api_key:
+        return _generate_routes_sync(src, dst)
+
+    try:
+        tt_routes = await _tomtom.get_routes(src, dst)
+    except Exception:
+        return _generate_routes_sync(src, dst)
+
+    if not tt_routes or not tt_routes[0].get("geometry"):
+        return _generate_routes_sync(src, dst)
+
+    total_dist = haversine(src[0], src[1], dst[0], dst[1])
+
+    routes = []
+    for i, tt in enumerate(tt_routes):
+        path = tt["geometry"]  # already [{"lat":..,"lng":..}] from TomTom client
+
+        # Compute distance from geometry (sum of segments)
+        dist_km = 0.0
+        for j in range(len(path) - 1):
+            dist_km += haversine(
+                path[j]["lat"], path[j]["lng"],
+                path[j + 1]["lat"], path[j + 1]["lng"],
+            )
+        dist_km = dist_km if dist_km > 0 else total_dist
+
+        name = _ROUTE_NAMES[i] if i < len(_ROUTE_NAMES) else f"Route {i + 1}"
+        zones = _zones_along_path(path)
+
+        routes.append({
+            "name": name,
+            "eta": tt["eta"],
+            "distance": round(dist_km, 1),
+            "path": path,
+            "zones": zones,
+            "traffic_delay": tt.get("traffic_delay", 0),
+        })
+
+    return routes
+
+
 # =======================================================================
 # FRONTEND ENDPOINTS  (GET / POST  --  /api/*)
 # =======================================================================
@@ -203,7 +288,7 @@ def _generate_routes(
 # -----------------------------------------------------------------------
 
 @app.get("/api/routes")
-def api_routes(
+async def api_routes(
     source: str = Query("MIT"),
     destination: str = Query("Airport"),
     preference: float = Query(50),
@@ -221,7 +306,7 @@ def api_routes(
     src = _resolve_location(source)
     dst = _resolve_location(destination)
     towers_df = _get_towers()
-    route_dicts = _generate_routes(src, dst)
+    route_dicts = await _generate_routes(src, dst)
 
     # If max_eta_factor is 0 or negative, disable hard constraint
     effective_max = max_eta_factor if max_eta_factor > 0 else 999.0
@@ -395,13 +480,13 @@ class _RerouteBody(BaseModel):
 
 
 @app.post("/api/reroute")
-def api_reroute(body: _RerouteBody):
+async def api_reroute(body: _RerouteBody):
     """Reroute with bias toward better signal."""
     src = _resolve_location(body.source)
     dst = _resolve_location(body.destination)
     towers_df = _get_towers()
 
-    route_dicts = _generate_routes(src, dst)
+    route_dicts = await _generate_routes(src, dst)
     pref = max(body.preference, 70)  # bias toward signal on reroute
     ranked = rank_routes(
         route_dicts, towers_df,
@@ -704,7 +789,7 @@ def user_patterns_endpoint(req: UserPatternsRequest):
 # =======================================================================
 
 @app.get("/api/offline-bundle")
-def api_offline_bundle(
+async def api_offline_bundle(
     source: str = Query("MIT"),
     destination: str = Query("Airport"),
     preference: float = Query(50),
@@ -718,7 +803,7 @@ def api_offline_bundle(
     src = _resolve_location(source)
     dst = _resolve_location(destination)
     towers_df = _get_towers()
-    route_dicts = _generate_routes(src, dst)
+    route_dicts = await _generate_routes(src, dst)
 
     ranked = rank_routes(
         route_dicts, towers_df,

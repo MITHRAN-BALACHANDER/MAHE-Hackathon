@@ -15,3 +15,5 @@ gradio==4.31.0
 # additional libraries for API development
 fastapi==0.111.0
 uvicorn==0.30.1
+python-dotenv>=1.0.0
+httpx>=0.27.0
