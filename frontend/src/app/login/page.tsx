@@ -5,28 +5,30 @@ import { useRouter } from "next/navigation";
 import { login } from "@/src/services/auth";
 import { useAuth } from "@/src/hooks/useAuth";
 import Link from "next/link";
-import { Eye, EyeOff, Lock, Mail, Signal, TowerControl, Shield, Zap } from "lucide-react";
+import {
+  Eye,
+  EyeOff,
+  Lock,
+  Mail,
+  Signal,
+  TowerControl,
+  Shield,
+  Zap,
+  Compass,
+  MapPin,
+} from "lucide-react";
+import { motion, AnimatePresence } from "framer-motion";
 
 const FEATURES = [
   {
-    icon: Signal,
-    title: "Signal-Aware Routing",
-    desc: "Score routes by predicted cellular signal, not just ETA.",
+    icon: Compass,
+    title: "Intelligent Routing",
+    desc: "Experience navigation scored by true connectivity and time.",
   },
   {
     icon: TowerControl,
-    title: "Real Tower Data",
-    desc: "847+ cell towers from OpenCelliD across 20 Bangalore zones.",
-  },
-  {
-    icon: Shield,
-    title: "Dead Zone Alerts",
-    desc: "Get warned before entering weak signal areas.",
-  },
-  {
-    icon: Zap,
-    title: "AI Personalization",
-    desc: "Thompson Sampling RL learns your preferences in 3-5 trips.",
+    title: "Precision Data",
+    desc: "Powered by comprehensive cell tower analytics.",
   },
 ];
 
@@ -49,200 +51,293 @@ export default function LoginPage() {
       setToken(data.access_token || data.token);
       router.push("/");
     } catch (err: unknown) {
-      const message = err instanceof Error ? err.message : "Failed to login";
+      const message =
+        err instanceof Error
+          ? err.message
+          : "Failed to sign in. Please verify your credentials.";
       setError(message);
     } finally {
       setIsLoading(false);
     }
   };
 
-  return (
-    <div className="flex min-h-screen">
-      {/* Left Panel - Product Showcase */}
-      <div className="hidden lg:flex lg:w-[55%] auth-gradient-bg relative overflow-hidden flex-col justify-center items-center px-16">
-        {/* Floating decorative circles */}
-        <div className="absolute top-20 left-16 w-72 h-72 bg-blue-500/10 rounded-full blur-3xl animate-float" />
-        <div className="absolute bottom-32 right-20 w-96 h-96 bg-cyan-500/10 rounded-full blur-3xl animate-float" style={{ animationDelay: "2s" }} />
-        <div className="absolute top-1/2 left-1/3 w-48 h-48 bg-purple-500/10 rounded-full blur-2xl animate-float" style={{ animationDelay: "4s" }} />
+  const containerVariants = {
+    hidden: { opacity: 0 },
+    visible: {
+      opacity: 1,
+      transition: { staggerChildren: 0.1, delayChildren: 0.2 },
+    },
+  };
 
-        {/* Content */}
-        <div className="relative z-10 max-w-lg">
-          <div className="flex items-center gap-3 mb-8">
-            <div className="w-12 h-12 rounded-2xl bg-gradient-to-br from-blue-400 to-cyan-400 flex items-center justify-center animate-pulse-glow">
-              <Signal className="text-white" size={24} />
+  const itemVariants = {
+    hidden: { opacity: 0, y: 20 },
+    visible: {
+      opacity: 1,
+      y: 0,
+      transition: { duration: 0.6, ease: [0.22, 1, 0.36, 1] },
+    },
+  };
+
+  return (
+    <div className="flex justify-center min-h-screen bg-[#f4f1ea] selection:bg-[#2c3e50] selection:text-[#f4f1ea] font-sans">
+      {/* Left Panel - Classic Aesthetic */}
+      <motion.div
+        initial={{ opacity: 0, x: -50 }}
+        animate={{ opacity: 1, x: 0 }}
+        transition={{ duration: 1, ease: "easeOut" }}
+        className="hidden lg:flex lg:w-[50%] relative overflow-hidden flex-col justify-center items-center px-16 bg-[#1a2530]"
+      >
+        {/* Subtle vintage map-like texture / ambient glow */}
+        <div className="absolute inset-0 opacity-[0.03] bg-[radial-gradient(circle_at_center,_var(--tw-gradient-stops))] from-white via-transparent to-transparent pointer-events-none" />
+        <div className="absolute top-0 left-0 w-full h-full bg-[url('https://www.transparenttextures.com/patterns/stardust.png')] opacity-20 pointer-events-none" />
+
+        <motion.div
+          initial="hidden"
+          animate="visible"
+          variants={containerVariants}
+          className="relative z-10 max-w-lg text-[#f4f1ea]"
+        >
+          <motion.div
+            variants={itemVariants}
+            className="flex items-center gap-4 mb-6"
+          >
+            <div className="w-14 h-14 rounded-full border border-[#d4af37]/30 flex items-center justify-center bg-[#2c3e50] shadow-[0_0_15px_rgba(212,175,55,0.1)]">
+              <MapPin className="text-[#d4af37]" strokeWidth={1.5} size={28} />
             </div>
             <div>
-              <h1 className="text-3xl font-bold text-white tracking-tight" style={{ fontFamily: "var(--font-sora)" }}>
-                SignalRoute
-              </h1>
-              <p className="text-blue-200 text-sm">Cellular Network-Aware Routing</p>
+              <h1 className="text-4xl font-serif tracking-wide">SignalRoute</h1>
+              <p className="text-[#aeb6bf] text-sm uppercase tracking-widest mt-1 font-medium">
+                Modern Cartography
+              </p>
             </div>
-          </div>
+          </motion.div>
 
-          <h2 className="text-2xl font-semibold text-white/90 mb-3 leading-snug">
-            Maps optimize travel time.
+          <motion.h2
+            variants={itemVariants}
+            className="text-3xl font-serif text-white/95 mb-4 leading-tight"
+          >
+            Navigation elevated.
             <br />
-            <span className="text-transparent bg-clip-text bg-gradient-to-r from-cyan-300 to-blue-300">
-              We optimize connectivity continuity.
-            </span>
-          </h2>
+            <span className="text-[#d4af37] italic">Connectivity assured.</span>
+          </motion.h2>
 
-          <p className="text-blue-200/80 text-sm mb-10 leading-relaxed">
-            Navigate smarter — avoid dead zones, stay connected during calls,
-            and never lose tracking signal mid-route.
-          </p>
+          <motion.p
+            variants={itemVariants}
+            className="text-[#aeb6bf] text-base mb-8 leading-relaxed max-w-md font-light"
+          >
+            Traverse the modern landscape with the elegance of traditional
+            guidance, empowered by predictive cellular intelligence.
+          </motion.p>
 
-          {/* Feature cards grid */}
-          <div className="grid grid-cols-2 gap-4">
+          <motion.div
+            variants={containerVariants}
+            className="grid grid-cols-2 gap-x-8 gap-y-8"
+          >
             {FEATURES.map((feat, i) => (
-              <div
+              <motion.div
                 key={feat.title}
-                className="stat-card animate-slide-up"
-                style={{ animationDelay: `${i * 0.1}s` }}
+                variants={itemVariants}
+                className="group cursor-default"
               >
-                <feat.icon className="text-cyan-400 mb-2" size={20} />
-                <h3 className="text-white text-sm font-semibold mb-1">{feat.title}</h3>
-                <p className="text-blue-200/60 text-xs leading-relaxed">{feat.desc}</p>
-              </div>
+                <feat.icon
+                  className="text-[#d4af37] mb-3 opacity-80 group-hover:opacity-100 transition-opacity duration-500"
+                  strokeWidth={1.5}
+                  size={24}
+                />
+                <h3 className="text-[#f4f1ea] text-sm uppercase tracking-wider font-semibold mb-2">
+                  {feat.title}
+                </h3>
+                <p className="text-[#8e98a3] text-xs leading-relaxed font-light">
+                  {feat.desc}
+                </p>
+              </motion.div>
             ))}
-          </div>
-        </div>
-      </div>
+          </motion.div>
+        </motion.div>
+      </motion.div>
 
-      {/* Right Panel - Login Form */}
-      <div className="flex-1 flex items-center justify-center bg-gradient-to-br from-slate-50 to-blue-50/30 px-6">
-        <div className="w-full max-w-md">
-          {/* Mobile logo */}
-          <div className="lg:hidden flex items-center gap-3 mb-8 justify-center">
-            <div className="w-10 h-10 rounded-xl bg-gradient-to-br from-blue-500 to-cyan-500 flex items-center justify-center">
-              <Signal className="text-white" size={20} />
+      {/* Right Panel - Form */}
+      <div className="flex-1 flex items-center justify-center p-4 relative">
+        <div className="absolute inset-0 bg-[#f4f1ea] opacity-50 pointer-events-none" />
+
+        <motion.div
+          initial={{ opacity: 0, y: 30 }}
+          animate={{ opacity: 1, y: 0 }}
+          transition={{ duration: 0.8, delay: 0.2, ease: [0.22, 1, 0.36, 1] }}
+          className="w-full max-w-md relative z-10"
+        >
+          {/* Mobile Header */}
+          <div className="lg:hidden flex flex-col items-center gap-3 mb-6 justify-center">
+            <div className="w-12 h-12 rounded-full border border-[#d4af37]/40 flex items-center justify-center bg-[#1a2530]">
+              <MapPin className="text-[#d4af37]" strokeWidth={1.5} size={24} />
             </div>
-            <span className="text-2xl font-bold text-gray-900" style={{ fontFamily: "var(--font-sora)" }}>SignalRoute</span>
+            <span className="text-3xl font-serif text-[#1a2530]">
+              SignalRoute
+            </span>
           </div>
 
-          {/* Glass card */}
-          <div className="glass-card rounded-3xl p-8 sm:p-10">
-            <div className="text-center mb-8">
-              <h2 className="text-2xl font-bold text-gray-900" style={{ fontFamily: "var(--font-sora)" }}>
-                Welcome back
+          <div className="bg-white/80 backdrop-blur-xl border border-[#e5e0d8] shadow-2xl shadow-[#1a2530]/5 rounded-2xl p-6 sm:p-8">
+            <div className="text-center mb-6">
+              <h2 className="text-3xl font-serif text-[#1a2530] tracking-tight">
+                Welcome
               </h2>
-              <p className="text-sm text-gray-500 mt-1">Sign in to access your routes</p>
+              <p className="text-sm text-[#7f8c8d] mt-2 font-light">
+                Enter your credentials to continue your journey.
+              </p>
             </div>
 
-            {/* Tabs */}
-            <div className="flex bg-gray-100 rounded-xl p-1 mb-8">
-              <div className="flex-1 text-center py-2.5 text-sm font-semibold bg-white rounded-lg text-gray-900 shadow-sm cursor-default">
+            {/* Elegant Tabs */}
+            <div className="flex mb-6 border-b border-[#e5e0d8]">
+              <div className="flex-1 text-center pb-3 text-sm font-semibold text-[#1a2530] border-b-2 border-[#1a2530] cursor-default">
                 Sign In
               </div>
               <Link
                 href="/register"
-                className="flex-1 text-center py-2.5 text-sm font-medium text-gray-500 hover:text-gray-700 rounded-lg transition-colors"
+                className="flex-1 text-center pb-3 text-sm font-medium text-[#95a5a6] hover:text-[#1a2530] transition-colors"
               >
-                Sign Up
+                Create Account
               </Link>
             </div>
 
-            <form onSubmit={handleSubmit} className="space-y-5">
-              {error && (
-                <div className="bg-red-50 border border-red-200 text-red-600 text-sm rounded-xl px-4 py-3 animate-slide-up">
-                  {error}
-                </div>
-              )}
+            <form onSubmit={handleSubmit} className="space-y-4">
+              <AnimatePresence>
+                {error && (
+                  <motion.div
+                    initial={{ opacity: 0, height: 0 }}
+                    animate={{ opacity: 1, height: "auto" }}
+                    exit={{ opacity: 0, height: 0 }}
+                    className="bg-[#c0392b]/10 border border-[#c0392b]/20 text-[#c0392b] text-sm rounded-lg px-4 py-3"
+                  >
+                    {error}
+                  </motion.div>
+                )}
+              </AnimatePresence>
 
-              {/* Username */}
-              <div>
-                <label htmlFor="login-username" className="block text-sm font-medium text-gray-700 mb-1.5">
+              <div className="space-y-1">
+                <label
+                  htmlFor="login-username"
+                  className="block text-xs uppercase tracking-wider font-semibold text-[#34495e]"
+                >
                   Username
                 </label>
-                <div className="relative">
-                  <Mail className="absolute left-4 top-1/2 -translate-y-1/2 text-gray-400" size={18} />
+                <div className="relative group">
+                  <Mail
+                    className="absolute left-4 top-1/2 -translate-y-1/2 text-[#bdc3c7] transition-colors group-focus-within:text-[#1a2530]"
+                    size={18}
+                    strokeWidth={1.5}
+                  />
                   <input
                     id="login-username"
                     name="username"
                     type="text"
                     required
-                    className="glass-input w-full rounded-xl pl-12 pr-4 py-3 text-sm text-gray-900 placeholder-gray-400 outline-none"
-                    placeholder="Enter your username"
+                    className="w-full bg-transparent border-b border-[#bdc3c7] pl-12 pr-4 py-3 text-sm text-[#2c3e50] placeholder-[#bdc3c7] outline-none focus:border-[#1a2530] transition-colors"
+                    placeholder="Your identifier"
                     value={username}
                     onChange={(e) => setUsername(e.target.value)}
                   />
                 </div>
               </div>
 
-              {/* Password */}
-              <div>
-                <label htmlFor="login-password" className="block text-sm font-medium text-gray-700 mb-1.5">
+              <div className="space-y-1">
+                <label
+                  htmlFor="login-password"
+                  className="block text-xs uppercase tracking-wider font-semibold text-[#34495e]"
+                >
                   Password
                 </label>
-                <div className="relative">
-                  <Lock className="absolute left-4 top-1/2 -translate-y-1/2 text-gray-400" size={18} />
+                <div className="relative group">
+                  <Lock
+                    className="absolute left-4 top-1/2 -translate-y-1/2 text-[#bdc3c7] transition-colors group-focus-within:text-[#1a2530]"
+                    size={18}
+                    strokeWidth={1.5}
+                  />
                   <input
                     id="login-password"
                     name="password"
                     type={showPassword ? "text" : "password"}
                     required
-                    className="glass-input w-full rounded-xl pl-12 pr-12 py-3 text-sm text-gray-900 placeholder-gray-400 outline-none"
-                    placeholder="Enter your password"
+                    className="w-full bg-transparent border-b border-[#bdc3c7] pl-12 pr-12 py-3 text-sm text-[#2c3e50] placeholder-[#bdc3c7] outline-none focus:border-[#1a2530] transition-colors"
+                    placeholder="Your secure key"
                     value={password}
                     onChange={(e) => setPassword(e.target.value)}
                   />
                   <button
                     type="button"
                     onClick={() => setShowPassword(!showPassword)}
-                    className="absolute right-4 top-1/2 -translate-y-1/2 text-gray-400 hover:text-gray-600 cursor-pointer"
+                    className="absolute right-0 top-1/2 -translate-y-1/2 text-[#bdc3c7] hover:text-[#1a2530] p-3 transition-colors cursor-pointer"
                   >
-                    {showPassword ? <EyeOff size={18} /> : <Eye size={18} />}
+                    {showPassword ? (
+                      <EyeOff size={18} strokeWidth={1.5} />
+                    ) : (
+                      <Eye size={18} strokeWidth={1.5} />
+                    )}
                   </button>
                 </div>
               </div>
 
-              {/* Submit */}
-              <button
+              <motion.button
+                whileHover={{ scale: 1.01 }}
+                whileTap={{ scale: 0.99 }}
                 type="submit"
                 disabled={isLoading}
-                className="w-full py-3 bg-gradient-to-r from-blue-500 to-cyan-500 hover:from-blue-600 hover:to-cyan-600 text-white text-sm font-semibold rounded-xl transition-all duration-300 disabled:opacity-50 disabled:cursor-not-allowed cursor-pointer shadow-lg shadow-blue-500/20 hover:shadow-blue-500/40"
+                className="w-full py-3 mt-2 bg-[#1a2530] hover:bg-[#2c3e50] text-[#f4f1ea] text-sm font-semibold uppercase tracking-wider rounded-none transition-all duration-300 disabled:opacity-70 disabled:cursor-not-allowed cursor-pointer"
               >
                 {isLoading ? (
-                  <span className="flex items-center justify-center gap-2">
-                    <svg className="animate-spin h-4 w-4" viewBox="0 0 24 24">
-                      <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" fill="none" />
-                      <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
-                    </svg>
-                    Signing in...
+                  <span className="flex items-center justify-center gap-3">
+                    <motion.div
+                      animate={{ rotate: 360 }}
+                      transition={{
+                        repeat: Infinity,
+                        duration: 1,
+                        ease: "linear",
+                      }}
+                      className="w-4 h-4 border-2 border-[#f4f1ea]/30 border-t-[#f4f1ea] rounded-full"
+                    />
+                    Authenticating
                   </span>
                 ) : (
                   "Sign In"
                 )}
-              </button>
+              </motion.button>
             </form>
 
-            {/* Divider */}
-            <div className="flex items-center gap-4 my-6">
-              <div className="flex-1 h-px bg-gray-200" />
-              <span className="text-xs text-gray-400">or</span>
-              <div className="flex-1 h-px bg-gray-200" />
+            <div className="flex items-center gap-4 my-5">
+              <div className="flex-1 h-px bg-[#e5e0d8]" />
+              <span className="text-xs uppercase tracking-widest text-[#95a5a6] font-medium">
+                Or
+              </span>
+              <div className="flex-1 h-px bg-[#e5e0d8]" />
             </div>
 
-            {/* Google button placeholder */}
             <button
               type="button"
-              className="w-full py-3 bg-white border border-gray-200 text-sm font-medium text-gray-700 rounded-xl hover:bg-gray-50 transition-colors flex items-center justify-center gap-3 cursor-pointer"
+              className="w-full py-3 bg-transparent border border-[#bdc3c7] text-sm font-semibold uppercase tracking-wider text-[#34495e] hover:bg-[#f4f1ea]/50 hover:border-[#1a2530] transition-all duration-300 flex items-center justify-center gap-3 cursor-pointer"
             >
               <svg width="18" height="18" viewBox="0 0 24 24">
-                <path d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92a5.06 5.06 0 01-2.2 3.32v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.1z" fill="#4285F4" />
-                <path d="M12 23c2.97 0 5.46-.98 7.28-2.66l-3.57-2.77c-.98.66-2.23 1.06-3.71 1.06-2.86 0-5.29-1.93-6.16-4.53H2.18v2.84C3.99 20.53 7.7 23 12 23z" fill="#34A853" />
-                <path d="M5.84 14.09c-.22-.66-.35-1.36-.35-2.09s.13-1.43.35-2.09V7.07H2.18C1.43 8.55 1 10.22 1 12s.43 3.45 1.18 4.93l2.85-2.22.81-.62z" fill="#FBBC05" />
-                <path d="M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.45 2.09 14.97 1 12 1 7.7 1 3.99 3.47 2.18 7.07l3.66 2.84c.87-2.6 3.3-4.53 6.16-4.53z" fill="#EA4335" />
+                <path
+                  d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92a5.06 5.06 0 01-2.2 3.32v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.1z"
+                  fill="#4285F4"
+                />
+                <path
+                  d="M12 23c2.97 0 5.46-.98 7.28-2.66l-3.57-2.77c-.98.66-2.23 1.06-3.71 1.06-2.86 0-5.29-1.93-6.16-4.53H2.18v2.84C3.99 20.53 7.7 23 12 23z"
+                  fill="#34A853"
+                />
+                <path
+                  d="M5.84 14.09c-.22-.66-.35-1.36-.35-2.09s.13-1.43.35-2.09V7.07H2.18C1.43 8.55 1 10.22 1 12s.43 3.45 1.18 4.93l2.85-2.22.81-.62z"
+                  fill="#FBBC05"
+                />
+                <path
+                  d="M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.45 2.09 14.97 1 12 1 7.7 1 3.99 3.47 2.18 7.07l3.66 2.84c.87-2.6 3.3-4.53 6.16-4.53z"
+                  fill="#EA4335"
+                />
               </svg>
-              Sign in with Google
+              Continue with Google
             </button>
 
-            {/* Footer */}
-            <p className="text-center text-xs text-gray-400 mt-6">
-              © 2026 SignalRoute AI. All rights reserved.
-            </p>
+          
           </div>
-        </div>
+        </motion.div>
       </div>
     </div>
   );
