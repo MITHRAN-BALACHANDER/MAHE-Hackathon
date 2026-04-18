@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState, useCallback } from "react";
 import L from "leaflet";
 import "leaflet/dist/leaflet.css";
 import type { Coordinate, HeatmapZone, RouteOption } from "@/src/types/route";
@@ -9,27 +9,38 @@ const BANGALORE_CENTER: L.LatLngExpression = [12.9716, 77.5946];
 const DEFAULT_ZOOM = 12;
 
 const ROUTE_COLORS = {
-  selected: "#4285F4",
+  selected: "#3b82f6",
   alt: "#93b5f5",
 } as const;
 
-function createZoneIcon(zone: HeatmapZone): L.DivIcon {
+export type HeatmapFilterType = "signal" | "weather" | "traffic" | "road";
+
+const HEATMAP_COLORS: Record<HeatmapFilterType, { strong: string; medium: string; weak: string }> = {
+  signal: { strong: "#22c55e", medium: "#eab308", weak: "#ef4444" },
+  weather: { strong: "#6366f1", medium: "#a78bfa", weak: "#c4b5fd" },
+  traffic: { strong: "#22c55e", medium: "#f97316", weak: "#ef4444" },
+  road: { strong: "#10b981", medium: "#fbbf24", weak: "#f87171" },
+};
+
+// Lucide TowerControl SVG for cell tower markers
+function createZoneIcon(zone: HeatmapZone, filterType: HeatmapFilterType = "signal"): L.DivIcon {
+  const palette = HEATMAP_COLORS[filterType];
   const color =
     zone.signal_strength === "strong"
-      ? "#34A853"
+      ? palette.strong
       : zone.signal_strength === "medium"
-        ? "#FBBC04"
-        : "#EA4335";
+        ? palette.medium
+        : palette.weak;
 
-  // Cell tower SVG icon
-  const towerSvg = `<svg xmlns="http://www.w3.org/2000/svg" width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="${color}" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
-    <path d="M4.9 16.1C1 12.2 1 5.8 4.9 1.9"/>
-    <path d="M7.8 4.7a6.14 6.14 0 0 0-.8 7.5"/>
-    <circle cx="12" cy="9" r="2"/>
-    <path d="M16.2 4.7a6.14 6.14 0 0 1 .8 7.5"/>
-    <path d="M19.1 1.9a10.56 10.56 0 0 1 0 14.2"/>
-    <path d="M12 11v9"/>
-    <path d="M8 20h8"/>
+  // Lucide TowerControl icon SVG
+  const towerSvg = `<svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="${color}" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M11 12h2"/>
+    <path d="M12 12v9"/>
+    <path d="M7.5 7.2C6.6 8.3 6 9.6 6 11a6 6 0 0 0 .5 2.4"/>
+    <path d="M16.5 7.2c.9 1.1 1.5 2.4 1.5 3.8a6 6 0 0 1-.5 2.4"/>
+    <path d="M4.2 4.2C2.8 5.8 2 8.3 2 11c0 1.8.5 3.5 1.2 5"/>
+    <path d="M19.8 4.2c1.4 1.6 2.2 4.1 2.2 6.8 0 1.8-.5 3.5-1.2 5"/>
+    <path d="M8 21h8"/>
   </svg>`;
 
   return L.divIcon({
@@ -37,15 +48,33 @@ function createZoneIcon(zone: HeatmapZone): L.DivIcon {
     html: `<div style="
       display:flex;align-items:center;gap:4px;
       background:#fff;
-      padding:3px 8px 3px 4px;
+      padding:3px 8px 3px 5px;
       border-radius:16px;
       border:1.5px solid ${color};
       white-space:nowrap;
-      box-shadow:0 1px 4px rgba(0,0,0,.15);
+      box-shadow:0 2px 8px rgba(0,0,0,.12);
       cursor:pointer;
       pointer-events:auto;
-    ">${towerSvg}<span style="font-size:10px;font-weight:600;color:${color};">${Math.round(zone.score)}</span></div>`,
+      transition: transform 0.15s ease;
+    " onmouseover="this.style.transform='scale(1.08)'" onmouseout="this.style.transform='scale(1)'">${towerSvg}<span style="font-size:10px;font-weight:700;color:${color};">${Math.round(zone.score)}</span></div>`,
     iconAnchor: [45, 14],
+  });
+}
+
+function createPinIcon(type: "source" | "destination"): L.DivIcon {
+  const color = type === "source" ? "#3b82f6" : "#ef4444";
+  const label = type === "source" ? "A" : "B";
+  return L.divIcon({
+    className: "",
+    html: `<div style="position:relative;cursor:grab;">
+      <svg width="36" height="48" viewBox="0 0 36 48">
+        <path d="M18 0C8.06 0 0 8.06 0 18c0 12.6 18 30 18 30s18-17.4 18-30C36 8.06 27.94 0 18 0z" fill="${color}"/>
+        <circle cx="18" cy="18" r="10" fill="white"/>
+        <text x="18" y="23" text-anchor="middle" font-size="14" font-weight="bold" fill="${color}">${label}</text>
+      </svg>
+    </div>`,
+    iconSize: [36, 48],
+    iconAnchor: [18, 48],
   });
 }
 
@@ -54,7 +83,7 @@ function createUserIcon(): L.DivIcon {
     className: "",
     html: `<div style="
       width:18px;height:18px;
-      background:#4285F4;
+      background:#3b82f6;
       border:3px solid #fff;
       border-radius:50%;
       box-shadow:0 1px 4px rgba(0,0,0,.4);
@@ -71,6 +100,8 @@ type Props = {
   onRouteClick?: (index: number) => void;
   trackingPosition?: Coordinate | null;
   userLocation?: Coordinate | null;
+  heatmapFilter?: HeatmapFilterType;
+  onPinDrag?: (type: "source" | "destination", lat: number, lng: number) => void;
 };
 
 export default function MapView({
@@ -80,6 +111,8 @@ export default function MapView({
   onRouteClick,
   trackingPosition,
   userLocation,
+  heatmapFilter = "signal",
+  onPinDrag,
 }: Props) {
   const containerRef = useRef<HTMLDivElement>(null);
   const mapRef = useRef<L.Map | null>(null);
@@ -87,8 +120,17 @@ export default function MapView({
   const zoneLayerRef = useRef<L.LayerGroup | null>(null);
   const markerRef = useRef<L.Marker | null>(null);
   const userLocMarkerRef = useRef<L.Marker | null>(null);
+  const pinLayerRef = useRef<L.LayerGroup | null>(null);
   const [mapReady, setMapReady] = useState(false);
   const [tilesLoaded, setTilesLoaded] = useState(false);
+
+  const handlePinDrag = useCallback(
+    (type: "source" | "destination", e: L.DragEndEvent) => {
+      const latlng = e.target.getLatLng();
+      onPinDrag?.(type, latlng.lat, latlng.lng);
+    },
+    [onPinDrag],
+  );
 
   // Initialize map
   useEffect(() => {
@@ -119,14 +161,21 @@ export default function MapView({
     };
   }, []);
 
-  // Draw routes
+  // Draw routes with tooltips + source/dest pins
   useEffect(() => {
     if (!mapReady || !mapRef.current) return;
     const map = mapRef.current;
 
-    // Clear old
+    // Clear old route polylines
     routeLayersRef.current.forEach((l) => l.remove());
     routeLayersRef.current = [];
+
+    // Clear old pin markers
+    if (pinLayerRef.current) {
+      pinLayerRef.current.clearLayers();
+    } else {
+      pinLayerRef.current = L.layerGroup().addTo(map);
+    }
 
     if (routes.length === 0) return;
 
@@ -154,6 +203,29 @@ export default function MapView({
         bubblingMouseEvents: false,
       }).addTo(map);
 
+      // Route tooltip with description
+      const signalLabel = route.signal_score >= 70 ? "Strong" : route.signal_score >= 40 ? "Medium" : "Weak";
+      const tooltipContent = `
+        <div style="font-family:system-ui;min-width:160px;">
+          <div style="font-weight:700;font-size:13px;margin-bottom:4px;">${route.name}</div>
+          <div style="display:flex;gap:12px;font-size:11px;color:#6b7280;">
+            <span>⏱ ${route.eta} min</span>
+            <span>📍 ${route.distance} km</span>
+          </div>
+          <div style="margin-top:4px;font-size:11px;">
+            Signal: <span style="font-weight:600;color:${route.signal_score >= 70 ? '#22c55e' : route.signal_score >= 40 ? '#eab308' : '#ef4444'}">${signalLabel} (${Math.round(route.signal_score)})</span>
+          </div>
+          ${route.zones.length > 0 ? `<div style="margin-top:4px;font-size:10px;color:#9ca3af;">via ${route.zones.slice(0, 3).join(", ")}${route.zones.length > 3 ? "..." : ""}</div>` : ""}
+        </div>
+      `;
+
+      polyline.bindTooltip(tooltipContent, {
+        sticky: true,
+        direction: "top",
+        className: "zone-tooltip",
+        offset: [0, -8],
+      });
+
       // Pointer cursor on hover for alt routes
       if (!isSelected) {
         polyline.on("mouseover", () => {
@@ -170,15 +242,39 @@ export default function MapView({
       routeLayersRef.current.push(polyline);
     });
 
-    // Fit bounds to selected route
+    // Add draggable source and destination pins for selected route
     const selected = routes[selectedRouteIndex];
     if (selected?.path.length > 0) {
+      const startPt = selected.path[0];
+      const endPt = selected.path[selected.path.length - 1];
+
+      // Source pin (draggable)
+      const srcMarker = L.marker([startPt.lat, startPt.lng], {
+        icon: createPinIcon("source"),
+        draggable: true,
+        zIndexOffset: 500,
+      });
+      srcMarker.bindTooltip("Drag to adjust start", { direction: "top" });
+      srcMarker.on("dragend", (e) => handlePinDrag("source", e as L.DragEndEvent));
+      pinLayerRef.current!.addLayer(srcMarker);
+
+      // Destination pin (draggable)
+      const dstMarker = L.marker([endPt.lat, endPt.lng], {
+        icon: createPinIcon("destination"),
+        draggable: true,
+        zIndexOffset: 500,
+      });
+      dstMarker.bindTooltip("Drag to adjust destination", { direction: "top" });
+      dstMarker.on("dragend", (e) => handlePinDrag("destination", e as L.DragEndEvent));
+      pinLayerRef.current!.addLayer(dstMarker);
+
+      // Fit bounds
       const bounds = L.latLngBounds(selected.path.map((p) => [p.lat, p.lng] as L.LatLngExpression));
       map.fitBounds(bounds, { padding: [60, 60] });
     }
-  }, [mapReady, routes, selectedRouteIndex, onRouteClick]);
+  }, [mapReady, routes, selectedRouteIndex, onRouteClick, handlePinDrag]);
 
-  // Draw zone markers
+  // Draw zone markers with heatmap filter
   useEffect(() => {
     if (!mapReady || !mapRef.current) return;
     const map = mapRef.current;
@@ -190,15 +286,17 @@ export default function MapView({
     }
 
     heatmapZones.forEach((zone) => {
-      const icon = createZoneIcon(zone);
+      const icon = createZoneIcon(zone, heatmapFilter);
       const marker = L.marker([zone.lat, zone.lng], { icon, interactive: true });
+
+      const filterLabel = heatmapFilter === "signal" ? "Signal" : heatmapFilter === "weather" ? "Weather Impact" : heatmapFilter === "traffic" ? "Traffic" : "Road Quality";
       marker.bindTooltip(
-        `<b>${zone.name}</b><br/>Signal: ${zone.score.toFixed(1)}/100<br/>${zone.signal_strength}`,
+        `<b>${zone.name}</b><br/>${filterLabel}: ${zone.score.toFixed(1)}/100<br/>${zone.signal_strength}`,
         { direction: "top", className: "zone-tooltip" },
       );
       zoneLayerRef.current!.addLayer(marker);
     });
-  }, [mapReady, heatmapZones]);
+  }, [mapReady, heatmapZones, heatmapFilter]);
 
   // Live tracking marker
   useEffect(() => {
@@ -234,10 +332,10 @@ export default function MapView({
       className: "",
       html: `<div style="
         width:14px;height:14px;
-        background:#4285F4;
+        background:#3b82f6;
         border:3px solid #fff;
         border-radius:50%;
-        box-shadow:0 0 0 2px rgba(66,133,244,.3), 0 1px 4px rgba(0,0,0,.3);
+        box-shadow:0 0 0 2px rgba(59,130,244,.3), 0 1px 4px rgba(0,0,0,.3);
       "></div>`,
       iconSize: [14, 14],
       iconAnchor: [7, 7],
@@ -263,6 +361,7 @@ export default function MapView({
         </div>
       )}
       <div
+        id="map-area"
         ref={containerRef}
         className="absolute inset-0"
         style={{ zIndex: 0 }}
