@@ -1,6 +1,6 @@
 ﻿"use client";
 
-import { AlertTriangle, ChevronLeft, Clock, MapPin, Navigation, Signal, Shield, Wifi } from "lucide-react";
+import { AlertTriangle, ChevronLeft, Clock, MapPin, Navigation, Signal, Shield, Square, Wifi } from "lucide-react";
 import type { RouteOption } from "@/src/types/route";
 
 type Props = {
@@ -8,6 +8,9 @@ type Props = {
   selectedIndex: number;
   recommendedRoute: string;
   suggestedRoute?: string;
+  tracking?: boolean;
+  onStartNavigation?: () => void;
+  onStopNavigation?: () => void;
   onSelect: (index: number) => void;
   onClose: () => void;
   visible: boolean;
@@ -36,6 +39,9 @@ export function RouteSidebar({
   onClose,
   visible,
   enriching,
+  tracking,
+  onStartNavigation,
+  onStopNavigation,
 }: Props) {
   if (!visible || routes.length === 0) return null;
 
@@ -196,6 +202,29 @@ export function RouteSidebar({
             </button>
           );
         })}
+      </div>
+
+      {/* Start / Stop navigation footer */}
+      <div className="px-4 py-3 border-t border-slate-700/60 shrink-0">
+        {tracking ? (
+          <button
+            type="button"
+            onClick={onStopNavigation}
+            className="w-full flex items-center justify-center gap-2 py-2.5 bg-red-500/90 hover:bg-red-500 text-white text-sm font-semibold rounded-xl cursor-pointer transition-all shadow-lg shadow-red-500/20"
+          >
+            <Square size={15} />
+            Stop Navigation
+          </button>
+        ) : (
+          <button
+            type="button"
+            onClick={onStartNavigation}
+            className="w-full flex items-center justify-center gap-2 py-2.5 bg-gradient-to-r from-cyan-500 to-blue-600 hover:from-cyan-400 hover:to-blue-500 text-white text-sm font-semibold rounded-xl cursor-pointer transition-all shadow-lg shadow-cyan-500/20"
+          >
+            <Navigation size={15} />
+            Start Navigation
+          </button>
+        )}
       </div>
     </div>
   );

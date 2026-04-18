@@ -47,8 +47,10 @@ export const routeService = {
 };
 
 export const heatmapService = {
-  async getHeatmap(): Promise<HeatmapResponse> {
-    const { data } = await client.get<HeatmapResponse>("/api/heatmap");
+  async getHeatmap(layer: string = "signal"): Promise<HeatmapResponse> {
+    const { data } = await client.get<HeatmapResponse>("/api/heatmap", {
+      params: { layer },
+    });
     return data;
   },
 };

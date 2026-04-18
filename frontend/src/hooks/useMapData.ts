@@ -33,11 +33,12 @@ export function useRoutes(params: RouteQueryParams) {
   });
 }
 
-export function useHeatmap() {
+export function useHeatmap(layer: string = "signal", enabled = true) {
   return useQuery({
-    queryKey: ["heatmap"],
-    queryFn: () => heatmapService.getHeatmap(),
+    queryKey: ["heatmap", layer],
+    queryFn: () => heatmapService.getHeatmap(layer),
     staleTime: 60_000,
+    enabled,
   });
 }
 

@@ -798,40 +798,115 @@ async def api_routes(
 
 
 # -----------------------------------------------------------------------
-# GET /api/heatmap
+# GET /api/heatmap  -- multi-layer heatmap (signal / weather / traffic / road)
 # -----------------------------------------------------------------------
 
 @app.get("/api/heatmap")
-def api_heatmap():
-    """Signal-strength heatmap for all Bangalore zones."""
+async def api_heatmap(layer: str = Query("signal")):
+    """Heatmap data for all Bangalore zones. Supports layer=signal|weather|traffic|road."""
     towers_df = _get_towers()
     zones = []
-    for name, info in ZONES.items():
-        lat, lng = info["center"]
-        try:
-            feats = extract_features(lat, lng, towers_df, 12.0, 1.0, 40.0)
-            result = predict_single(feats)
-            score = result["signal_strength"]
-        except Exception:
-            score = 50.0
 
-        if score >= 70:
-            strength, color = "strong", "#22c55e"
-        elif score >= 40:
-            strength, color = "medium", "#eab308"
+    if layer == "signal":
+        for name, info in ZONES.items():
+            lat, lng = info["center"]
+            try:
+                feats = extract_features(lat, lng, towers_df, 12.0, 1.0, 40.0)
+                result = predict_single(feats)
+                score = result["signal_strength"]
+            except Exception:
+                score = 50.0
+            if score >= 70:
+                strength, color = "strong", "#22c55e"
+            elif score >= 40:
+                strength, color = "medium", "#eab308"
+            else:
+                strength, color = "weak", "#ef4444"
+            zones.append({
+                "name": name, "lat": lat, "lng": lng,
+                "score": round(score, 1), "label": strength, "color": color,
+            })
+
+    elif layer == "weather":
+        for name, info in ZONES.items():
+            lat, lng = info["center"]
+            try:
+                w = await _weather.get_weather(lat, lng)
+                factor = w.get("weather_factor", 1.0)
+                score = round(factor * 100, 1)
+                condition = w.get("condition", "Clear")
+            except Exception:
+                score, condition = 100.0, "Clear"
+            if score >= 80:
+                label, color = "Clear", "#22c55e"
+            elif score >= 55:
+                label, color = "Moderate", "#eab308"
+            else:
+                label, color = "Severe", "#ef4444"
+            zones.append({
+                "name": name, "lat": lat, "lng": lng,
+                "score": score, "label": f"{label} ({condition})", "color": color,
+            })
+
+    elif layer == "traffic":
+        # Derive traffic congestion from zone density + time-of-day variation
+        import math
+        hour = datetime.datetime.now().hour
+        # Peak hours: 8-10 AM, 5-8 PM
+        peak_factor = 1.0
+        if 8 <= hour <= 10:
+            peak_factor = 1.6 + 0.2 * math.sin(hour * 0.5)
+        elif 17 <= hour <= 20:
+            peak_factor = 1.8 + 0.15 * math.sin(hour * 0.3)
+        elif 11 <= hour <= 16:
+            peak_factor = 1.1
         else:
-            strength, color = "weak", "#ef4444"
+            peak_factor = 0.6
 
-        zones.append({
-            "name": name,
-            "lat": lat,
-            "lng": lng,
-            "score": round(score, 1),
-            "signal_strength": strength,
-            "color": color,
-        })
+        density_map = {"high": 80, "medium": 50, "low": 25}
+        terrain_traffic = {"highway": 15, "urban_main": 20, "suburban": -5, "residential": -15}
 
-    return {"zones": zones}
+        for name, info in ZONES.items():
+            lat, lng = info["center"]
+            base = density_map.get(info.get("density", "medium"), 50)
+            terrain_adj = terrain_traffic.get(info.get("terrain", "urban_main"), 0)
+            # Seeded jitter so each zone has consistent but varied congestion
+            jitter = (hash(name) % 21) - 10
+            raw = (base + terrain_adj + jitter) * peak_factor
+            score = round(max(5, min(100, raw)), 1)
+            if score >= 70:
+                label, color = "Heavy", "#ef4444"
+            elif score >= 40:
+                label, color = "Moderate", "#eab308"
+            else:
+                label, color = "Light", "#22c55e"
+            zones.append({
+                "name": name, "lat": lat, "lng": lng,
+                "score": score, "label": label, "color": color,
+            })
+
+    elif layer == "road":
+        terrain_labels = {
+            "highway": ("Highway", "#3b82f6"),
+            "urban_main": ("Urban Main", "#f59e0b"),
+            "suburban": ("Suburban", "#22c55e"),
+            "residential": ("Residential", "#a855f7"),
+        }
+        terrain_scores = {"highway": 90, "urban_main": 70, "suburban": 50, "residential": 30}
+        for name, info in ZONES.items():
+            lat, lng = info["center"]
+            terrain = info.get("terrain", "urban_main")
+            label, color = terrain_labels.get(terrain, ("Unknown", "#6b7280"))
+            score = terrain_scores.get(terrain, 50)
+            zones.append({
+                "name": name, "lat": lat, "lng": lng,
+                "score": score, "label": label, "color": color,
+            })
+
+    else:
+        raise HTTPException(400, f"Unknown heatmap layer: {layer}")
+
+    return {"layer": layer, "zones": zones}
 
 
 # -----------------------------------------------------------------------

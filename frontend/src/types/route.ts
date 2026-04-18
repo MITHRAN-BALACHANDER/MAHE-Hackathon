@@ -136,11 +136,12 @@ export type HeatmapZone = {
   lat: number;
   lng: number;
   score: number;
-  signal_strength: "strong" | "medium" | "weak";
+  label: string;
   color: string;
 };
 
 export type HeatmapResponse = {
+  layer: string;
   zones: HeatmapZone[];
 };
 

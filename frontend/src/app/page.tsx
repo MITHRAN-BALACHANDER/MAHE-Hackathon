@@ -1,8 +1,10 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useRouter } from "next/navigation";
 
 import { ActionButtons } from "@/src/components/actions/ActionButtons";
+import { HeatmapLegend } from "@/src/components/common/HeatmapLegend";
 import { RouteBottomCard } from "@/src/components/common/RouteBottomCard";
 import { Toast } from "@/src/components/common/Toast";
 import { WeatherBadge } from "@/src/components/common/WeatherBadge";
@@ -15,10 +17,31 @@ import { useGeolocation } from "@/src/hooks/useGeolocation";
 import { useFastRoutes, useHeatmap, useReroute, useRoutes, useTowerMarkers } from "@/src/hooks/useMapData";
 import { useNetworkDetect } from "@/src/hooks/useNetworkDetect";
 import { useTracking } from "@/src/hooks/useTracking";
+import { useAuth } from "@/src/hooks/useAuth";
 import { offlineService, mapboxSearchService, routeService, alertsService } from "@/src/services/api";
 import type { TelecomMode, WeatherInfo, CallDropStats, RouteOption } from "@/src/types/route";
 
 export default function Home() {
+  const router = useRouter();
+  const { isAuthenticated, token } = useAuth();
+
+  // Redirect to login if not authenticated (after hydration)
+  useEffect(() => {
+    if (token === null && typeof window !== "undefined") {
+      // Give AuthProvider one tick to hydrate from localStorage
+      const tid = setTimeout(() => {
+        if (!localStorage.getItem("token")) {
+          router.replace("/login");
+        }
+      }, 50);
+      return () => clearTimeout(tid);
+    }
+  }, [token, router]);
+
+  // Don't render map until we know auth status (avoids flash)
+  if (!isAuthenticated && typeof window !== "undefined" && !localStorage.getItem("token")) {
+    return null;
+  }
   // Search state -- empty on load
   const [source, setSource] = useState("");
   const [destination, setDestination] = useState("");
@@ -31,9 +54,21 @@ export default function Home() {
 
   // Filter state
   const [preference, setPreference] = useState(50);
-  const [telecom, setTelecom] = useState<TelecomMode>("all");
+  // Multi-ISP selection: [] = all networks, one = specific carrier, 2+ = multi-SIM mode
+  const [selectedIsps, setSelectedIsps] = useState<string[]>([]);
   const [maxEtaFactor, setMaxEtaFactor] = useState(1.5);
-  const [heatmapFilter, setHeatmapFilter] = useState<HeatmapFilterType>("signal");
+  const [heatmapFilter, setHeatmapFilter] = useState<HeatmapFilterType>("none");
+
+  // Derive telecom API param from selectedIsps
+  const telecom: TelecomMode = useMemo(() => {
+    if (selectedIsps.length === 0) return "all";
+    if (selectedIsps.length === 1) {
+      const id = selectedIsps[0];
+      if (id === "jio" || id === "airtel" || id === "vi") return id;
+      return "all"; // bsnl → all (backend does not score bsnl separately)
+    }
+    return "multi";
+  }, [selectedIsps]);
 
   // UI state
   const [selectedRouteIndex, setSelectedRouteIndex] = useState(0);
@@ -75,7 +110,7 @@ export default function Home() {
   const { data: routeData, isLoading: fullLoading } = useRoutes(
     queryParams ?? { source: "", destination: "", preference: 50, telecom: "all" },
   );
-  const { data: heatmapData } = useHeatmap();
+  const { data: heatmapData } = useHeatmap(heatmapFilter, heatmapFilter !== "none");
   const { data: towerMarkersData } = useTowerMarkers();
   const reroute = useReroute();
 
@@ -103,7 +138,7 @@ export default function Home() {
   const recommendedRoute = (hasFull ? routeData?.recommended_route : fastRouteData?.recommended_route) ?? "";
   const routesLoading = hasSearched && !routes.length && (fastLoading || fullLoading);
 
-  const heatmapZones = heatmapData?.zones ?? [];
+  const heatmapZones = heatmapFilter !== "none" ? (heatmapData?.zones ?? []) : [];
   const towerMarkers = towerMarkersData ?? [];
 
   const selectedRoute = routes[selectedRouteIndex] ?? routes[0];
@@ -344,7 +379,12 @@ export default function Home() {
       setSource(chatSource);
       setDestination(chatDest);
       setPreference(pref);
-      setTelecom(tel);
+      // Map single TelecomMode from chatbot back to selectedIsps
+      if (tel === "all" || tel === "multi") {
+        setSelectedIsps([]);
+      } else {
+        setSelectedIsps([tel]);
+      }
       setSnapshotSrc(chatSource);
       setSnapshotDst(chatDest);
       setSuggestedRoute("Suggested");
@@ -453,16 +493,10 @@ export default function Home() {
       )}
       {/* Filter panel (top-right) */}
       <FilterPanel
-        preference={preference}
-        telecom={telecom}
-        onPreferenceChange={setPreference}
-        onTelecomChange={setTelecom}
+        selectedIsps={selectedIsps}
+        onIspsChange={setSelectedIsps}
         onChatApply={handleChatApply}
         detectedNetwork={networkInfo.type}
-        maxEtaFactor={maxEtaFactor}
-        onMaxEtaFactorChange={setMaxEtaFactor}
-        onDownloadOffline={hasSearched ? handleDownloadOffline : undefined}
-        offlineReady={offlineReady}
         heatmapFilter={heatmapFilter}
         onHeatmapFilterChange={setHeatmapFilter}
       />
@@ -491,6 +525,9 @@ export default function Home() {
         onClose={() => setSidebarOpen(false)}
         visible={sidebarOpen && routes.length > 0}
         enriching={hasSearched && !hasFull && fullLoading}
+        tracking={trackingActive}
+        onStartNavigation={handleStartNavigation}
+        onStopNavigation={() => setTrackingActive(false)}
       />
 
       {/* Bottom route card */}
@@ -501,6 +538,13 @@ export default function Home() {
           onStartNavigation={handleStartNavigation}
           suggested={!!suggestedRoute && selectedRoute.name === recommendedRoute}
         />
+      )}
+
+      {/* Heatmap color legend (bottom-right) -- only when a layer is active */}
+      {heatmapFilter !== "none" && (
+        <div className="absolute bottom-44 right-4 z-[900]">
+          <HeatmapLegend filter={heatmapFilter} />
+        </div>
       )}
 
       {/* Action buttons (bottom-right) */}

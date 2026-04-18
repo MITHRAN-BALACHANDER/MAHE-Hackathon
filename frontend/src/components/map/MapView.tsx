@@ -41,12 +41,12 @@ const OPERATOR_COLORS: Record<string, string> = {
 // ---------------------------------------------------------------------------
 // Types (re-export for MapContainer)
 // ---------------------------------------------------------------------------
-export type HeatmapFilterType = "signal" | "weather" | "traffic" | "road";
+export type HeatmapFilterType = "signal" | "weather" | "traffic" | "road" | "none";
 
 type Props = {
   routes: RouteOption[];
   selectedRouteIndex: number;
-  heatmapZones: { name: string; lat: number; lng: number; score: number; signal_strength: string; color: string }[];
+  heatmapZones: { name: string; lat: number; lng: number; score: number; label: string; color: string }[];
   towerMarkers?: TowerMarker[];
   onRouteClick?: (index: number) => void;
   trackingPosition?: Coordinate | null;
@@ -168,10 +168,12 @@ function getBounds(coords: Coordinate[]): mapboxgl.LngLatBoundsLike {
 export default function MapView({
   routes,
   selectedRouteIndex,
+  heatmapZones,
   towerMarkers,
   onRouteClick,
   trackingPosition,
   userLocation,
+  heatmapFilter,
   onPinDrag,
 }: Props) {
   const containerRef = useRef<HTMLDivElement>(null);
@@ -579,6 +581,228 @@ export default function MapView({
       });
     });
   }, [mapLoaded, routes, selectedRouteIndex]);
+
+  // -----------------------------------------------------------------------
+  // 2c. Heatmap zone overlay -- colored circles (signal/weather/traffic) or
+  //     colored road lines (road layer)
+  // -----------------------------------------------------------------------
+  const heatmapIdsRef = useRef<string[]>([]);
+  const heatmapPopupsRef = useRef<mapboxgl.Popup[]>([]);
+
+  useEffect(() => {
+    if (!mapLoaded || !mapRef.current) return;
+    const map = mapRef.current;
+
+    // Clean up previous heatmap layers/sources
+    for (const id of heatmapIdsRef.current) {
+      for (const suffix of ["-glow", "-fill", "-outline", "-main"]) {
+        if (map.getLayer(`${id}${suffix}`)) map.removeLayer(`${id}${suffix}`);
+      }
+      if (map.getSource(id)) map.removeSource(id);
+    }
+    heatmapIdsRef.current = [];
+    heatmapPopupsRef.current.forEach((p) => p.remove());
+    heatmapPopupsRef.current = [];
+
+    // Nothing to render when no layer is selected or no zones
+    if (!heatmapFilter || heatmapFilter === "none") return;
+    if (!heatmapZones || heatmapZones.length === 0) return;
+
+    const layerType = heatmapFilter;
+
+    // ---- Road layer: draw colored line segments along selected route ----
+    if (layerType === "road") {
+      const selectedRoute = routes[selectedRouteIndex];
+      if (!selectedRoute?.path || selectedRoute.path.length < 2) return;
+
+      // Helper: squared flat-Earth distance between two lat/lng points
+      function sqDistDeg(aLat: number, aLng: number, bLat: number, bLng: number) {
+        const dx = (aLng - bLng) * DEG_TO_M_LNG;
+        const dy = (aLat - bLat) * DEG_TO_M_LAT;
+        return dx * dx + dy * dy;
+      }
+
+      // For each segment midpoint on the route, find the nearest road zone
+      const path = selectedRoute.path;
+      type Seg = { coords: [number, number][]; color: string; label: string };
+      const segments: Seg[] = [];
+
+      let currentColor = heatmapZones[0].color;
+      let currentLabel = heatmapZones[0].label;
+      let currentCoords: [number, number][] = [[path[0].lng, path[0].lat]];
+
+      for (let i = 0; i < path.length - 1; i++) {
+        const midLat = (path[i].lat + path[i + 1].lat) / 2;
+        const midLng = (path[i].lng + path[i + 1].lng) / 2;
+
+        let minDist = Infinity;
+        let nearestColor = currentColor;
+        let nearestLabel = currentLabel;
+        for (const zone of heatmapZones) {
+          const d = sqDistDeg(midLat, midLng, zone.lat, zone.lng);
+          if (d < minDist) {
+            minDist = d;
+            nearestColor = zone.color;
+            nearestLabel = zone.label;
+          }
+        }
+
+        if (nearestColor !== currentColor) {
+          // Flush current segment up to this point
+          currentCoords.push([path[i].lng, path[i].lat]);
+          segments.push({ coords: currentCoords, color: currentColor, label: currentLabel });
+          currentColor = nearestColor;
+          currentLabel = nearestLabel;
+          currentCoords = [[path[i].lng, path[i].lat]];
+        }
+        currentCoords.push([path[i + 1].lng, path[i + 1].lat]);
+      }
+      // Flush last segment
+      if (currentCoords.length >= 2) {
+        segments.push({ coords: currentCoords, color: currentColor, label: currentLabel });
+      }
+
+      segments.forEach((seg, idx) => {
+        const srcId = `hm-road-seg-${idx}`;
+        map.addSource(srcId, {
+          type: "geojson",
+          data: {
+            type: "Feature",
+            properties: { color: seg.color, label: seg.label },
+            geometry: { type: "LineString", coordinates: seg.coords },
+          },
+        });
+        heatmapIdsRef.current.push(srcId);
+
+        // Wide glow halo
+        map.addLayer({
+          id: `${srcId}-glow`,
+          type: "line",
+          source: srcId,
+          layout: { "line-join": "round", "line-cap": "round" },
+          paint: { "line-color": seg.color, "line-width": 22, "line-opacity": 0.18, "line-blur": 8 },
+        });
+        // Main colored road line (drawn over existing route line)
+        map.addLayer({
+          id: `${srcId}-main`,
+          type: "line",
+          source: srcId,
+          layout: { "line-join": "round", "line-cap": "round" },
+          paint: { "line-color": seg.color, "line-width": 9, "line-opacity": 0.80 },
+        });
+
+        // Popup on click
+        map.on("click", `${srcId}-main`, (e) => {
+          const popup = new mapboxgl.Popup({ closeButton: true, offset: 4 })
+            .setLngLat(e.lngLat)
+            .setHTML(
+              `<div style="font-family:system-ui;padding:2px 0;">
+                <div style="font-weight:700;font-size:13px;color:${seg.color};margin-bottom:4px;">Road Segment</div>
+                <div style="font-size:11px;color:#e2e8f0;">Type: <strong>${seg.label}</strong></div>
+              </div>`,
+            )
+            .addTo(map);
+          heatmapPopupsRef.current.push(popup);
+        });
+        map.on("mouseenter", `${srcId}-main`, () => { map.getCanvas().style.cursor = "pointer"; });
+        map.on("mouseleave", `${srcId}-main`, () => { map.getCanvas().style.cursor = ""; });
+      });
+
+      return;
+    }
+
+    // ---- Signal / Weather / Traffic layers: colored circles ----
+    heatmapZones.forEach((zone, idx) => {
+      // Radius based on score -- higher score = larger circle for signal/weather,
+      // inverted for traffic (high congestion = larger warning area)
+      const baseRadius = layerType === "traffic"
+        ? 0.008 + (zone.score / 100) * 0.012
+        : 0.008 + ((100 - zone.score) / 100) * 0.008;
+
+      // Build circle polygon (48 segments for smoothness)
+      const steps = 48;
+      const coords: [number, number][] = [];
+      const lngScale = Math.cos((zone.lat * Math.PI) / 180);
+      for (let s = 0; s <= steps; s++) {
+        const angle = (s / steps) * 2 * Math.PI;
+        coords.push([
+          zone.lng + (baseRadius / lngScale) * Math.cos(angle),
+          zone.lat + baseRadius * Math.sin(angle),
+        ]);
+      }
+
+      const srcId = `hm-${layerType}-${idx}`;
+      map.addSource(srcId, {
+        type: "geojson",
+        data: {
+          type: "Feature",
+          properties: {
+            name: zone.name,
+            score: zone.score,
+            label: zone.label,
+            color: zone.color,
+          },
+          geometry: { type: "Polygon", coordinates: [coords] },
+        },
+      });
+      heatmapIdsRef.current.push(srcId);
+
+      // Outer glow
+      map.addLayer({
+        id: `${srcId}-glow`,
+        type: "fill",
+        source: srcId,
+        paint: {
+          "fill-color": zone.color,
+          "fill-opacity": 0.1,
+        },
+      });
+
+      // Main fill
+      map.addLayer({
+        id: `${srcId}-fill`,
+        type: "fill",
+        source: srcId,
+        paint: {
+          "fill-color": zone.color,
+          "fill-opacity": 0.3,
+        },
+      });
+
+      // Outline ring
+      map.addLayer({
+        id: `${srcId}-outline`,
+        type: "line",
+        source: srcId,
+        paint: {
+          "line-color": zone.color,
+          "line-width": 1.5,
+          "line-opacity": 0.6,
+        },
+      });
+
+      // Popup on click
+      map.on("click", `${srcId}-fill`, () => {
+        const popup = new mapboxgl.Popup({ closeButton: true, offset: 4 })
+          .setLngLat([zone.lng, zone.lat])
+          .setHTML(
+            `<div style="font-family:system-ui;padding:2px 0;">
+              <div style="font-weight:700;font-size:13px;color:${zone.color};margin-bottom:4px;">${zone.name}</div>
+              <div style="font-size:11px;color:#e2e8f0;margin-bottom:2px;">${layerType.charAt(0).toUpperCase() + layerType.slice(1)}: <strong>${zone.label}</strong></div>
+              <div style="font-size:11px;color:#94a3b8;">Score: ${zone.score}/100</div>
+            </div>`,
+          )
+          .addTo(map);
+        heatmapPopupsRef.current.push(popup);
+      });
+      map.on("mouseenter", `${srcId}-fill`, () => {
+        map.getCanvas().style.cursor = "pointer";
+      });
+      map.on("mouseleave", `${srcId}-fill`, () => {
+        map.getCanvas().style.cursor = "";
+      });
+    });
+  }, [mapLoaded, heatmapZones, heatmapFilter, routes, selectedRouteIndex]);
 
   // -----------------------------------------------------------------------
   // 3. Tower dot markers -- only towers near the selected route
