@@ -504,7 +504,7 @@ export default function MapView({
   }, [mapLoaded, routes, selectedRouteIndex, onRouteClick, handlePinDragEnd]);
 
   // -----------------------------------------------------------------------
-  // 2b. Dead zone heatmap -- neon red/orange blobs on the selected route
+  // 2b. Dead zone overlays -- drawn as thick warning segments ON the route
   // -----------------------------------------------------------------------
   const deadZoneIdsRef = useRef<string[]>([]);
 
@@ -516,94 +516,133 @@ export default function MapView({
     for (const id of deadZoneIdsRef.current) {
       if (map.getLayer(`${id}-pulse`)) map.removeLayer(`${id}-pulse`);
       if (map.getLayer(`${id}-fill`)) map.removeLayer(`${id}-fill`);
+      if (map.getLayer(`${id}-line`)) map.removeLayer(`${id}-line`);
+      if (map.getLayer(`${id}-glow`)) map.removeLayer(`${id}-glow`);
       if (map.getSource(id)) map.removeSource(id);
     }
     deadZoneIdsRef.current = [];
 
     const selected = routes[selectedRouteIndex];
-    if (!selected?.bad_zones?.length) return;
+    if (!selected) return;
 
-    selected.bad_zones.forEach((bz, idx) => {
-      const midLat = (bz.start_coord.lat + bz.end_coord.lat) / 2;
-      const midLng = (bz.start_coord.lng + bz.end_coord.lng) / 2;
-
-      // Radius proportional to the zone length, minimum 200m
-      const radiusDeg = Math.max(0.002, (bz.length_km / 111) * 0.5);
-
-      // Build a circle polygon (32 segments)
-      const steps = 32;
-      const coords: [number, number][] = [];
-      for (let s = 0; s <= steps; s++) {
-        const angle = (s / steps) * 2 * Math.PI;
-        const lngScale = Math.cos((midLat * Math.PI) / 180);
-        coords.push([
-          midLng + (radiusDeg / lngScale) * Math.cos(angle),
-          midLat + radiusDeg * Math.sin(angle),
-        ]);
+    // Helper: get sub-path points between two coords (nearest-point matching)
+    function subPath(start: { lat: number; lng: number }, end: { lat: number; lng: number }, path: Coordinate[]): [number, number][] {
+      if (!path?.length) return [[start.lng, start.lat], [end.lng, end.lat]];
+      let startIdx = 0, endIdx = path.length - 1;
+      let minStartDist = Infinity, minEndDist = Infinity;
+      for (let i = 0; i < path.length; i++) {
+        const dStart = Math.hypot(path[i].lat - start.lat, path[i].lng - start.lng);
+        const dEnd = Math.hypot(path[i].lat - end.lat, path[i].lng - end.lng);
+        if (dStart < minStartDist) { minStartDist = dStart; startIdx = i; }
+        if (dEnd < minEndDist) { minEndDist = dEnd; endIdx = i; }
       }
+      if (startIdx > endIdx) [startIdx, endIdx] = [endIdx, startIdx];
+      const pts = path.slice(startIdx, endIdx + 1);
+      if (pts.length < 2) return [[start.lng, start.lat], [end.lng, end.lat]];
+      return pts.map((p) => [p.lng, p.lat] as [number, number]);
+    }
 
-      const srcId = `dz-${selectedRouteIndex}-${idx}`;
-      map.addSource(srcId, {
+    function addDeadZoneLine(
+      id: string,
+      coords: [number, number][],
+      color: string,
+      glowColor: string,
+      label: string,
+      popupHtml: string,
+    ) {
+      if (coords.length < 2) return;
+      const midCoord = coords[Math.floor(coords.length / 2)];
+      map.addSource(id, {
         type: "geojson",
         data: {
           type: "Feature",
-          properties: { warning: bz.warning, length_km: bz.length_km },
-          geometry: { type: "Polygon", coordinates: [coords] },
+          properties: {},
+          geometry: { type: "LineString", coordinates: coords },
         },
       });
-      deadZoneIdsRef.current.push(srcId);
+      deadZoneIdsRef.current.push(id);
 
-      // Outer glow / pulse ring
+      // Outer glow
       map.addLayer({
-        id: `${srcId}-pulse`,
-        type: "fill",
-        source: srcId,
+        id: `${id}-glow`,
+        type: "line",
+        source: id,
         paint: {
-          "fill-color": "#ff1744",
-          "fill-opacity": 0.12,
+          "line-color": glowColor,
+          "line-width": 18,
+          "line-opacity": 0.25,
+          "line-blur": 6,
         },
+        layout: { "line-cap": "round", "line-join": "round" },
       });
 
-      // Inner solid fill
+      // Inner solid warning line
       map.addLayer({
-        id: `${srcId}-fill`,
-        type: "fill",
-        source: srcId,
+        id: `${id}-line`,
+        type: "line",
+        source: id,
         paint: {
-          "fill-color": [
-            "interpolate", ["linear"],
-            ["get", "length_km"],
-            0, "#ff6b35",
-            2, "#ff1744",
-            5, "#b71c1c",
-          ] as unknown as mapboxgl.Expression,
-          "fill-opacity": 0.38,
-          "fill-outline-color": "#ff1744",
+          "line-color": color,
+          "line-width": 7,
+          "line-opacity": 0.88,
+          "line-dasharray": [2, 1.5],
         },
+        layout: { "line-cap": "round", "line-join": "round" },
       });
 
-      // Popup on click
-      map.on("click", `${srcId}-fill`, () => {
-        new mapboxgl.Popup({ closeButton: true, offset: 4 })
-          .setLngLat([midLng, midLat])
-          .setHTML(
-            `<div style="font-family:system-ui;padding:2px 0;">
-              <div style="font-weight:700;font-size:12px;color:#ff4444;margin-bottom:4px;">Dead Zone</div>
-              <div style="font-size:11px;color:#374151;">${bz.warning}</div>
-              <div style="display:flex;gap:8px;margin-top:4px;font-size:10px;color:#9ca3af;">
-                <span>${bz.length_km} km</span>
-                <span>~${Math.round(bz.time_to_zone_min)} min away</span>
-              </div>
-            </div>`,
-          )
+      // Click popup
+      map.on("click", `${id}-line`, () => {
+        new mapboxgl.Popup({ closeButton: true, offset: 6 })
+          .setLngLat(midCoord)
+          .setHTML(popupHtml)
           .addTo(map);
       });
-      map.on("mouseenter", `${srcId}-fill`, () => {
-        map.getCanvas().style.cursor = "pointer";
-      });
-      map.on("mouseleave", `${srcId}-fill`, () => {
-        map.getCanvas().style.cursor = "";
-      });
+      map.on("mouseenter", `${id}-line`, () => { map.getCanvas().style.cursor = "pointer"; });
+      map.on("mouseleave", `${id}-line`, () => { map.getCanvas().style.cursor = ""; });
+    }
+
+    // Render bad_zones as dashed red/orange lines on the route
+    (selected.bad_zones ?? []).forEach((bz, idx) => {
+      const coords = subPath(bz.start_coord, bz.end_coord, selected.path);
+      const color = bz.min_signal < 20 ? "#ff1744" : "#ff6d00";
+      const glowColor = bz.min_signal < 20 ? "#ff1744" : "#ff9100";
+      addDeadZoneLine(
+        `dz-bad-${selectedRouteIndex}-${idx}`,
+        coords,
+        color,
+        glowColor,
+        "Dead Zone",
+        `<div style="font-family:system-ui;padding:2px 0;">
+          <div style="font-weight:700;font-size:12px;color:${color};margin-bottom:4px;">⚠ Dead Zone</div>
+          <div style="font-size:11px;color:#374151;">${bz.warning}</div>
+          <div style="display:flex;gap:8px;margin-top:4px;font-size:10px;color:#9ca3af;">
+            <span>${bz.length_km.toFixed(1)} km</span>
+            <span>~${Math.round(bz.time_to_zone_min)} min away</span>
+            <span>Min signal: ${Math.round(bz.min_signal)}</span>
+          </div>
+        </div>`,
+      );
+    });
+
+    // Render carrier_dead_zones (all carriers weak) as bold red lines
+    (selected.carrier_dead_zones ?? []).forEach((cz, idx) => {
+      const coords = subPath(cz.start_coord, cz.end_coord, selected.path);
+      addDeadZoneLine(
+        `dz-carrier-${selectedRouteIndex}-${idx}`,
+        coords,
+        "#b71c1c",
+        "#f44336",
+        "No Signal Zone",
+        `<div style="font-family:system-ui;padding:2px 0;">
+          <div style="font-weight:700;font-size:12px;color:#f44336;margin-bottom:4px;">📵 No Signal Zone</div>
+          <div style="font-size:11px;color:#374151;">All carriers weak in this area</div>
+          <div style="display:flex;gap:8px;margin-top:4px;font-size:10px;color:#9ca3af;">
+            <span>${cz.length_km.toFixed(1)} km</span>
+            <span>~${Math.round(cz.time_to_zone_min)} min away</span>
+            <span>Best signal: ${Math.round(cz.best_signal_in_zone)}</span>
+          </div>
+        </div>`,
+      );
     });
   }, [mapLoaded, routes, selectedRouteIndex]);
 
@@ -850,22 +889,78 @@ export default function MapView({
 
     for (const tower of visibleTowers) {
       const color = OPERATOR_COLORS[tower.operator] ?? "#6b7280";
-      const size = tower.signal_score >= 70 ? 8 : tower.signal_score >= 40 ? 7 : 6;
-      const opacity = tower.signal_score >= 70 ? 0.9 : tower.signal_score >= 40 ? 0.75 : 0.6;
+      const size = tower.signal_score >= 70 ? 9 : tower.signal_score >= 40 ? 7 : 6;
+      const opacity = tower.signal_score >= 70 ? 0.95 : tower.signal_score >= 40 ? 0.80 : 0.65;
 
+      // Fixed-size element — no scaling on hover (scaling shifts Mapbox anchor)
       const el = document.createElement("div");
-      el.style.cssText = `width:${size}px;height:${size}px;background:${color};border:1.5px solid rgba(255,255,255,0.8);border-radius:50%;opacity:${opacity};box-shadow:0 1px 3px rgba(0,0,0,.25);`;
+      el.style.cssText = `width:${size}px;height:${size}px;background:${color};border:2px solid rgba(255,255,255,0.9);border-radius:50%;opacity:${opacity};box-shadow:0 1px 4px rgba(0,0,0,.35);cursor:pointer;`;
+      el.title = tower.operator;
 
       const sLabel =
         tower.signal_score >= 70 ? "Strong" : tower.signal_score >= 40 ? "Medium" : "Weak";
-      const popup = new mapboxgl.Popup({ offset: 8, closeButton: false }).setHTML(
-        `<b>${tower.operator}</b>${tower.zone ? ` -- ${tower.zone}` : ""}<br/>Signal: ${sLabel} (${Math.round(tower.signal_score)})<br/><span style="font-size:10px;color:#9ca3af;">${tower.tower_id}</span>`,
-      );
+      const sColor =
+        tower.signal_score >= 70 ? "#22c55e" : tower.signal_score >= 40 ? "#f59e0b" : "#ef4444";
+
+      const popupHtml = `
+        <div style="font-family:system-ui;min-width:140px;padding:2px 0;">
+          <div style="display:flex;align-items:center;gap:6px;margin-bottom:6px;">
+            <div style="width:10px;height:10px;background:${color};border-radius:50%;border:1.5px solid #fff;box-shadow:0 1px 2px rgba(0,0,0,.3);flex-shrink:0;"></div>
+            <span style="font-weight:700;font-size:13px;color:#111;">${tower.operator}</span>
+          </div>
+          ${tower.zone ? `<div style="font-size:11px;color:#6b7280;margin-bottom:4px;">${tower.zone}</div>` : ""}
+          <div style="display:flex;align-items:center;gap:4px;margin-bottom:3px;">
+            <span style="font-size:11px;font-weight:600;color:${sColor};">● ${sLabel}</span>
+            <span style="font-size:11px;color:#374151;">(${Math.round(tower.signal_score)})</span>
+          </div>
+          ${tower.radio ? `<div style="font-size:10px;color:#9ca3af;">Type: ${tower.radio}</div>` : ""}
+          <div style="font-size:10px;color:#9ca3af;margin-top:2px;">ID: ${tower.tower_id}</div>
+        </div>`;
+
+      const popup = new mapboxgl.Popup({
+        offset: [0, -(size / 2) - 4],
+        closeButton: false,
+        closeOnClick: false,
+        className: "tower-popup",
+      }).setHTML(popupHtml);
 
       const m = new mapboxgl.Marker({ element: el })
         .setLngLat([tower.lng, tower.lat])
-        .setPopup(popup)
         .addTo(map);
+
+      // Debounced hide so moving from dot → popup doesn't flicker
+      let hideTimer: ReturnType<typeof setTimeout> | null = null;
+
+      const showPopup = () => {
+        if (hideTimer) { clearTimeout(hideTimer); hideTimer = null; }
+        // Highlight dot with stronger border (no position-shifting transform)
+        el.style.border = "2.5px solid #fff";
+        el.style.boxShadow = `0 0 0 3px ${color}55, 0 2px 8px rgba(0,0,0,.5)`;
+        popup.setLngLat([tower.lng, tower.lat]).addTo(map);
+      };
+
+      const hidePopup = () => {
+        hideTimer = setTimeout(() => {
+          el.style.border = "2px solid rgba(255,255,255,0.9)";
+          el.style.boxShadow = "0 1px 4px rgba(0,0,0,.35)";
+          popup.remove();
+        }, 120);
+      };
+
+      el.addEventListener("mouseenter", showPopup);
+      el.addEventListener("mouseleave", hidePopup);
+
+      // Keep popup open when mouse moves over it
+      popup.on("open", () => {
+        const popupEl = popup.getElement();
+        if (popupEl) {
+          popupEl.addEventListener("mouseenter", () => {
+            if (hideTimer) { clearTimeout(hideTimer); hideTimer = null; }
+          });
+          popupEl.addEventListener("mouseleave", hidePopup);
+        }
+      });
+
       towerMarkersRef.current.push(m);
     }
   }, [mapLoaded, towerMarkers, routes, selectedRouteIndex]);

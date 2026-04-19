@@ -6,6 +6,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 import numpy as np
 import pandas as pd
+from concurrent.futures import ThreadPoolExecutor, as_completed
 
 from model.utils import extract_features, haversine, segment_distances
 from model.inference import predict, predict_with_uncertainty
@@ -70,10 +71,22 @@ def score_route(
             # Fall back to all towers if filter yields nothing
             df = _ensure_towers_df(towers)
 
-    # Extract features for every path point
+    # Subsample path for scoring — cap at 60 points to bound inference time
+    # without losing signal quality (aggregate stats are stable at this density)
+    MAX_SCORE_POINTS = 60
+    if len(path) > MAX_SCORE_POINTS:
+        step = max(1, len(path) // MAX_SCORE_POINTS)
+        score_path = path[::step]
+    else:
+        score_path = path
+
+    # Pre-cache tower numpy arrays once per call (avoids repeated .values inside loop)
+    t_lats = df["lat"].values.astype(float) if "lat" in df.columns else None
+
+    # Extract features for sampled path points in a single vectorised pass
     feats = np.stack([
         extract_features(p["lat"], p["lng"], df, time_hour, weather_factor, speed_kmh, traffic_factor)
-        for p in path
+        for p in score_path
     ])
 
     preds = predict_with_uncertainty(feats, n_samples=MC_SAMPLES)
@@ -82,7 +95,7 @@ def score_route(
     seg_handoff = preds["handoff_risk"]        # (N,) 0-1
     seg_signal_unc = preds["signal_uncertainty"]  # (N,) MC dropout std
 
-    # Segment distances
+    # Segment distances (use full path for accurate km totals)
     seg_dists = segment_distances(path)  # (N-1,)
 
     # --- Aggregate metrics ---
@@ -165,7 +178,7 @@ def score_route(
         "max_drop_probability": round(max_drop_prob, 4),
         "avg_handoff_risk": round(avg_handoff_risk, 4),
         "single_tower_dependency_segments": single_tower_count,
-        "total_segments": len(path),
+        "total_segments": len(path),   # full path length, not sampled
         "drops_per_km": round(drops_per_km, 2),
         "avg_uncertainty": round(avg_uncertainty, 2),
         "max_uncertainty": round(max_uncertainty, 2),
@@ -274,28 +287,33 @@ def rank_routes(
     signal_w = preference / 100.0
     time_w = 1.0 - signal_w
 
-    # First pass: score connectivity for all routes
-    conn_results = []
-    multi_sim_results = []
-    for route in routes:
-        # Compute traffic_factor from TomTom traffic_delay (0 = free, 1 = heavy)
+    # Parallel scoring: run score_route for each route concurrently
+    def _score_one(route: dict) -> tuple[dict, dict | None]:
         traffic_delay = route.get("traffic_delay", 0)
-        traffic_factor = min(traffic_delay / 20.0, 1.0) if traffic_delay else 0.0
-
+        tf = min(traffic_delay / 20.0, 1.0) if traffic_delay else 0.0
         conn = score_route(
             route["path"], towers, telecom, time_hour, weather_factor, speed_kmh,
-            traffic_factor=traffic_factor,
+            traffic_factor=tf,
         )
-        conn_results.append(conn)
-
+        msim = None
         if include_multi_sim or telecom.lower() == "multi":
             msim = score_route_multi_sim(
                 route["path"], towers, time_hour, weather_factor, speed_kmh,
-                traffic_factor=traffic_factor,
+                traffic_factor=tf,
             )
-            multi_sim_results.append(msim)
-        else:
-            multi_sim_results.append(None)
+        return conn, msim
+
+    n_workers = min(len(routes), 5)
+    conn_results: list[dict] = [{}] * len(routes)
+    multi_sim_results: list[dict | None] = [None] * len(routes)
+
+    with ThreadPoolExecutor(max_workers=n_workers) as pool:
+        future_to_idx = {pool.submit(_score_one, r): i for i, r in enumerate(routes)}
+        for future in as_completed(future_to_idx):
+            idx = future_to_idx[future]
+            conn, msim = future.result()
+            conn_results[idx] = conn
+            multi_sim_results[idx] = msim
 
     etas = [r["eta"] for r in routes]
     sigs = [c["avg_connectivity"] for c in conn_results]

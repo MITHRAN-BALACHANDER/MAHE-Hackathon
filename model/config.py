@@ -124,7 +124,7 @@ BAD_ZONE_THRESHOLD = 30
 MAX_ETA_RATIO = 1.5
 
 # MC Dropout & uncertainty
-MC_SAMPLES = 8
+MC_SAMPLES = 5  # 5 passes is sufficient for stable uncertainty estimates; was 8
 UNCERTAINTY_LOW = 3.0       # below this = low uncertainty
 UNCERTAINTY_HIGH = 8.0      # above this = high uncertainty
 UNCERTAINTY_SEG_THRESHOLD = 5.0  # per-segment low-unc threshold

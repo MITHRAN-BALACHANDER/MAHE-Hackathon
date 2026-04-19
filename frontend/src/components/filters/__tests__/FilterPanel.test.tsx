@@ -97,7 +97,7 @@ describe("FilterPanel", () => {
 
   it("shows weather section when weather prop provided", () => {
     const weather = {
-      temperature_c: 28,
+      temperature_c: 33,
       condition: "Clear",
       description: "clear sky",
       icon: "01d",

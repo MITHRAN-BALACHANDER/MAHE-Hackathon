@@ -487,7 +487,7 @@ async def _generate_routes(
 # redundant model inference.  Cache key is (rounded coords, pref, telecom).
 # Coordinates are rounded to ~100m so nearby users share the same entry.
 
-_ROUTE_CACHE_TTL = 30  # seconds
+_ROUTE_CACHE_TTL = 60  # seconds — cache scored results for 60s to avoid redundant ML inference
 _route_cache: dict[str, tuple[float, dict]] = {}  # key -> (timestamp, response)
 
 
@@ -705,16 +705,22 @@ async def api_routes(
     # Seed crowd tracker with real TomTom flow data (async)
     await _crowd.seed_from_routes(ranked, now_hour)
 
-    # Multi-carrier dead zone prediction for each route
-    carrier_results = []
-    for r in ranked:
-        cz = _dzp.predict_carrier_zones(
-            r["path"], towers_df,
+    # Multi-carrier dead zone prediction for each route — run in parallel
+    loop = asyncio.get_event_loop()
+
+    def _predict_dz(route_path):
+        return _dzp.predict_carrier_zones(
+            route_path, towers_df,
             time_hour=now_hour,
             weather_factor=weather_factor,
             speed_kmh=40.0,
         )
-        carrier_results.append(cz)
+
+    dz_futures = [
+        loop.run_in_executor(None, _predict_dz, r["path"])
+        for r in ranked
+    ]
+    carrier_results = list(await asyncio.gather(*dz_futures))
 
     results = []
     for r, cz in zip(ranked, carrier_results):
@@ -1282,7 +1288,7 @@ def api_towers_geo(
         df = df.sample(n=max_towers, random_state=42)
 
     # Return only the columns the map needs
-    needed = ["tower_id", "lat", "lng", "operator", "signal_score", "zone"]
+    needed = ["tower_id", "lat", "lng", "operator", "signal_score", "zone", "radio"]
     available = [c for c in needed if c in df.columns]
     records = df[available].to_dict("records")
 
@@ -1291,6 +1297,8 @@ def api_towers_geo(
         r["lat"] = float(r["lat"])
         r["lng"] = float(r["lng"])
         r["signal_score"] = float(r.get("signal_score", 50))
+        if "radio" not in r:
+            r["radio"] = None
 
     return {"towers": records, "count": len(records)}
 

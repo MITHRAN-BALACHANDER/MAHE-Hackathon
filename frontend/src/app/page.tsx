@@ -131,10 +131,35 @@ export default function Home() {
   const recommendedRoute = (hasFull ? routeData?.recommended_route : fastRouteData?.recommended_route) ?? "";
   const routesLoading = hasSearched && !routes.length && (fastLoading || fullLoading);
 
+  // Client-side preference re-ranking: instantly resort displayed routes when
+  // the slider moves, giving immediate visual feedback on the map before the
+  // new backend query resolves. Only applies when we have full ML-scored routes.
+  const sortedRoutes = useMemo(() => {
+    if (!hasFull || routes.length < 2) return routes;
+    const maxEta = Math.max(...routes.map((r) => r.eta), 1);
+    return [...routes].sort((a, b) => {
+      const etaScoreA = ((maxEta - a.eta) / maxEta) * 100;
+      const etaScoreB = ((maxEta - b.eta) / maxEta) * 100;
+      const w = preference / 100;
+      const scoreA = w * a.signal_score + (1 - w) * etaScoreA;
+      const scoreB = w * b.signal_score + (1 - w) * etaScoreB;
+      return scoreB - scoreA;
+    });
+  }, [routes, preference, hasFull]);
+
+  // When preference changes and we have full routes, reset selection to new top route
+  const prevPreferenceRef = useRef(preference);
+  useEffect(() => {
+    if (prevPreferenceRef.current !== preference && hasFull && sortedRoutes.length > 0) {
+      setSelectedRouteIndex(0);
+    }
+    prevPreferenceRef.current = preference;
+  }, [preference, hasFull, sortedRoutes]);
+
   const heatmapZones = heatmapFilter !== "none" ? (heatmapData?.zones ?? []) : [];
   const towerMarkers = towerMarkersData ?? [];
 
-  const selectedRoute = routes[selectedRouteIndex] ?? routes[0];
+  const selectedRoute = sortedRoutes[selectedRouteIndex] ?? sortedRoutes[0];
   const trackingPath = selectedRoute?.path ?? [];
   const { position: trackingPosition, progress: trackingProgress } = useTracking(trackingPath, trackingActive);
 
@@ -143,9 +168,9 @@ export default function Home() {
   // Dynamic call drop stats: recomputed whenever selected route changes.
   // Compares the currently selected route's drop count vs the worst alternative.
   const callDropStats: CallDropStats | null = useMemo(() => {
-    if (!routes.length || !hasFull) return null;
+    if (!sortedRoutes.length || !hasFull) return null;
     const selDrops = selectedRoute?.segment_drop_count ?? 0;
-    const altDrops = routes
+    const altDrops = sortedRoutes
       .filter((_, i) => i !== selectedRouteIndex)
       .map((r) => r.segment_drop_count ?? 0);
     const worstAlt = altDrops.length > 0 ? Math.max(...altDrops) : selDrops;
@@ -458,7 +483,7 @@ export default function Home() {
     <div className="relative h-screen w-screen overflow-hidden bg-white">
       {/* Full-screen map */}
       <MapContainer
-        routes={routes}
+        routes={sortedRoutes}
         selectedRouteIndex={selectedRouteIndex}
         heatmapZones={heatmapZones}
         towerMarkers={towerMarkers}
@@ -506,12 +531,12 @@ export default function Home() {
       </div>
 
       {/* Enriching indicator */}
-      {hasSearched && !hasFull && fullLoading && routes.length > 0 && (
+      {/* {hasSearched && !hasFull && fullLoading && routes.length > 0 && (
         <div className="absolute top-[215px] left-4 z-[900] glass-card rounded-lg px-3 py-2 text-xs text-white/50 flex items-center gap-2 animate-fade-in">
           <span className="inline-block h-2 w-2 rounded-full bg-cyan-400 animate-pulse" />
           Running ML models for precise signal scores...
         </div>
-      )}
+      )} */}
       {/* Filter panel (top-right) */}
       <FilterPanel
         selectedIsps={selectedIsps}
@@ -532,13 +557,13 @@ export default function Home() {
 
       {/* Route sidebar (left) */}
       <RouteSidebar
-        routes={routes}
+        routes={sortedRoutes}
         selectedIndex={selectedRouteIndex}
         recommendedRoute={recommendedRoute}
         suggestedRoute={suggestedRoute ? recommendedRoute : ""}
         onSelect={handleRouteSelect}
         onClose={() => setSidebarOpen(false)}
-        visible={sidebarOpen && routes.length > 0}
+        visible={sidebarOpen && sortedRoutes.length > 0}
         enriching={hasSearched && !hasFull && fullLoading}
         tracking={trackingActive}
         onStartNavigation={handleStartNavigation}

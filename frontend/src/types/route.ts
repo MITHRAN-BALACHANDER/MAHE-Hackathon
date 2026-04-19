@@ -154,6 +154,7 @@ export type TowerMarker = {
   operator: string;
   signal_score: number;
   zone?: string;
+  radio?: string | null;
 };
 
 export type TowerMarkersResponse = {
