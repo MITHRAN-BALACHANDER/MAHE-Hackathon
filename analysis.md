@@ -577,6 +577,85 @@ Congestion data is sourced live from the **TomTom Traffic API** instead of using
 - Returns accidents, road closures, queuing traffic, slow traffic within a bounding box
 - Per-incident data: lat/lng, description, severity (low/medium/high), from/to road names, delay seconds
 - Dedicated endpoint: `GET /api/incidents?min_lat=...&min_lng=...&max_lat=...&max_lng=...`
+
+---
+
+## Integration Status & Verification
+
+### Backend-Frontend Endpoint Mapping (Verified)
+
+| Frontend Service | Endpoint | Backend | Status |
+|------------------|----------|---------|--------|
+| `routeService.getRoutes` | `GET /api/routes` | `@app.get("/api/routes")` | Working |
+| `routeService.getFastRoutes` | `GET /api/routes/fast` | `@app.get("/api/routes/fast")` | Working |
+| `routeService.reroute` | `POST /api/reroute` | `@app.post("/api/reroute")` | Working |
+| `heatmapService.getHeatmap` | `GET /api/heatmap` | `@app.get("/api/heatmap")` | Working |
+| `predictionService.getPrediction` | `GET /api/predict` | `@app.get("/api/predict")` | Working |
+| `towerService.getTowers` | `GET /api/towers` | `@app.get("/api/towers")` | Working |
+| `towerGeoService.fetchAll` | `GET /api/towers/geo` | `@app.get("/api/towers/geo")` | Working |
+| `weatherService.getWeather` | `GET /api/weather` | `@app.get("/api/weather")` | Working |
+| `alertsService.getAlerts` | `GET /api/alerts` | `@app.get("/api/alerts")` | Working |
+| `deadZoneService.predict` | `GET /api/dead-zones` | `@app.get("/api/dead-zones")` | Working |
+| `offlineService.downloadBundle` | `GET /api/offline-bundle` | `@app.get("/api/offline-bundle")` | Working |
+| `login()` | `POST /api/v1/login` | In-memory auth handler | Working |
+| `register()` | `POST /api/v1/register` | In-memory auth handler | Working |
+
+### Authentication Flow
+
+- AuthProvider hydrates token from `localStorage` on mount
+- `page.tsx` waits for `hydrated` flag before rendering the map
+- Unauthenticated users are redirected to `/login`
+- Login/Register use in-memory auth (no MongoDB dependency)
+- Demo account: `demo` / `demo123`
+
+### Data Reality
+
+| Source | Real / Synthetic |
+|--------|-----------------|
+| Cell tower locations (OpenCelliD, 601 towers) | Real |
+| Cell tower signal quality | Synthetic (hardcoded by radio type) |
+| Training samples (100K) | Synthetic (generated from propagation models) |
+| Route geometry (TomTom) | Real |
+| Weather (OpenWeatherMap) | Real |
+| Traffic flow (TomTom) | Real |
+| Zone definitions (25 Bangalore zones) | Curated |
+
+---
+
+## Honest Rating: 6.5 / 10
+
+### Breakdown
+
+| Category | Score | Notes |
+|----------|-------|-------|
+| Concept/Innovation | 8/10 | Signal-aware navigation is genuinely useful. Multi-SIM, dead zones, RL personalisation add real depth. |
+| ML Implementation | 7/10 | Architecture is sound (residual MLP, MC Dropout, multi-task). Trained on synthetic data, so real-world accuracy is unproven. |
+| Backend Engineering | 5/10 | Functional but monolithic (1,640-line main.py), duplicate auth systems, no rate limiting, global mutable state. |
+| Frontend | 7/10 | Clean React/Next.js with hooks, Mapbox GL, React Query. Good UX (two-phase loading, onboarding). Polished visuals. |
+| Data Pipeline | 5/10 | Training on synthetic propagation data is the biggest weakness. Real towers provide location only, not measured signal. |
+| Security | 4/10 | Plaintext demo passwords, JWT secret regenerated on restart, no endpoint auth, no rate limiting. Acceptable for hackathon only. |
+| Code Quality | 6/10 | Well-structured frontend and model code. Backend is a monolith with sys.path hacks. Good Pydantic schemas throughout. |
+| Completeness | 7/10 | 38 endpoints, 12 components, full ML pipeline, auth, chatbot, heatmaps, offline mode -- impressive surface area. |
+
+### What lifts the score
+
+- The idea is original and practical -- no existing nav app scores by cellular signal
+- ML pipeline is complete end-to-end (data generation -> training -> inference -> scoring -> API -> UI)
+- RL contextual bandit and dead zone prediction are genuine differentiators
+- Two-phase route loading provides excellent perceived performance
+- Frontend is visually polished with good UX patterns
+
+### What holds it back
+
+- Synthetic training data means ML accuracy claims are unverifiable against real-world conditions
+- Backend won't scale (monolith, in-process globals, no shared cache)
+- Security is hackathon-grade -- would need significant hardening for production
+- Some features are shallower than they appear (temporal prediction returns current value, traffic heatmap uses zone metadata)
+- Duplicate auth systems create confusion
+
+### Bottom line
+
+A strong hackathon project with genuine ML depth and a polished frontend. The concept is compelling and differentiated. The biggest gap is synthetic training data -- the model architecture is well-designed, but its accuracy is unproven without real signal measurements. For a hackathon demo, this is solid work. Production viability would require real data collection, backend restructuring, and security hardening.
 - Tested: Central Bangalore bbox → 77 live incidents returned with full street detail
 
 **Graceful fallback**: When TomTom is unavailable (network error, quota exceeded, no API key), the system falls back to a time-of-day + zone-density simulation so routing still works offline.

@@ -207,15 +207,24 @@ export default function MapView({
       // Satellite imagery with street labels -- vivid and geographical
       style: "mapbox://styles/mapbox/satellite-streets-v12",
       center: BANGALORE_CENTER,
-      zoom: DEFAULT_ZOOM,
-      pitch: 52,
-      bearing: -12,
+      // Start zoomed way out (globe view), then fly in after load
+      zoom: 1.5,
+      pitch: 0,
+      bearing: 0,
       antialias: true,
       attributionControl: false,
     });
 
     map.addControl(new mapboxgl.NavigationControl({ showCompass: true }), "bottom-right");
     map.addControl(new mapboxgl.AttributionControl({ compact: true }), "bottom-right");
+
+    // Suppress missing sprite image warnings (e.g. "in-state-4" from satellite style)
+    map.on("styleimagemissing", (e) => {
+      if (!map.hasImage(e.id)) {
+        // Create a tiny transparent placeholder so Mapbox stops warning
+        map.addImage(e.id, { width: 1, height: 1, data: new Uint8Array(4) });
+      }
+    });
 
     map.on("load", () => {
       // ---- Mapbox terrain DEM (actual elevation, needed for 3-D terrain) ----
@@ -275,6 +284,22 @@ export default function MapView({
       );
 
       setMapLoaded(true);
+
+      // Zoom-in intro: after a short pause fly from globe view into Bangalore
+      setTimeout(() => {
+        map.flyTo({
+          center: BANGALORE_CENTER,
+          zoom: DEFAULT_ZOOM,
+          pitch: 52,
+          bearing: -12,
+          duration: 3200,
+          essential: true,
+          easing: (t: number) => {
+            // Cubic ease-in-out for a smooth cinematic feel
+            return t < 0.5 ? 4 * t * t * t : 1 - Math.pow(-2 * t + 2, 3) / 2;
+          },
+        });
+      }, 800);
     });
 
     mapRef.current = map;

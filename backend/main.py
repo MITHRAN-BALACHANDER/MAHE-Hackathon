@@ -60,7 +60,14 @@ from backend import weather as _weather
 from backend import crowd_tracker as _crowd
 from backend import dead_zone_predictor as _dzp
 
-# Mount the auth router so /api/v1/login and /api/v1/register work
+# Mount the in-memory auth router first (works without MongoDB)
+try:
+    from backend.api.auth import router as auth_router
+    app.include_router(auth_router)
+except ImportError:
+    pass  # Auth module not available
+
+# Mount the MongoDB-backed auth router as fallback (requires running MongoDB)
 from backend.api.routes import router as _auth_router
 app.include_router(_auth_router, prefix="/api/v1", tags=["auth"])
 
@@ -70,14 +77,9 @@ app.description = "Cellular network-aware routing with reinforcement learning"
 app.version = "2.0.0"
 
 # -----------------------------------------------------------------------
+# -----------------------------------------------------------------------
 # Register new modular routers (enterprise architecture)
 # -----------------------------------------------------------------------
-
-try:
-    from backend.api.auth import router as auth_router
-    app.include_router(auth_router)
-except ImportError:
-    pass  # Auth module not available
 
 try:
     from backend.api.network import router as network_router
@@ -743,6 +745,10 @@ async def api_routes(
             "drops_per_km": r.get("drops_per_km", 0),
             "confidence": r.get("confidence", "medium"),
             "avg_uncertainty": r.get("avg_uncertainty", 0),
+            # Per-route call drop count (segments where drop_prob > 0.5)
+            "segment_drop_count": int(sum(
+                1 for p in conn.get("segment_drop_probs", []) if p > 0.5
+            )),
             # Bad zone predictions
             "bad_zones": [
                 {

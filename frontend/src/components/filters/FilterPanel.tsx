@@ -3,7 +3,9 @@
 import { MessageCircle, Signal, CloudRain, Car, Route, Check, X } from "lucide-react";
 import { useState } from "react";
 import type { TelecomMode } from "@/src/types/route";
+import type { WeatherInfo } from "@/src/types/route";
 import { ChatBot } from "@/src/components/chat/ChatBot";
+import { WeatherBadge } from "@/src/components/common/WeatherBadge";
 import type { HeatmapFilterType } from "@/src/components/map/MapContainer";
 
 const ISP_OPTIONS: { id: string; label: string; color: string }[] = [
@@ -33,6 +35,7 @@ type Props = {
   detectedNetwork: string;
   heatmapFilter?: HeatmapFilterType;
   onHeatmapFilterChange?: (v: HeatmapFilterType) => void;
+  weather?: WeatherInfo | null;
 };
 
 export function FilterPanel({
@@ -42,6 +45,7 @@ export function FilterPanel({
   detectedNetwork,
   heatmapFilter = "none",
   onHeatmapFilterChange,
+  weather,
 }: Props) {
   const [chatOpen, setChatOpen] = useState(false);
 
@@ -200,6 +204,14 @@ export function FilterPanel({
                   <span className="text-white/30">On: </span>{detectedNetwork}
                 </p>
               </div>
+            </div>
+          )}
+
+          {/* Weather section */}
+          {weather && (
+            <div className="px-3 pb-3 border-t border-white/[0.06] pt-3">
+              <p className="text-[10px] font-semibold uppercase tracking-wider text-white/35 mb-2">Weather</p>
+              <WeatherBadge weather={weather} />
             </div>
           )}
         </div>

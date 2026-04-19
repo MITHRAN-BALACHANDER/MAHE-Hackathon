@@ -7,14 +7,13 @@ import { ActionButtons } from "@/src/components/actions/ActionButtons";
 import { HeatmapLegend } from "@/src/components/common/HeatmapLegend";
 import { RouteBottomCard } from "@/src/components/common/RouteBottomCard";
 import { Toast } from "@/src/components/common/Toast";
-import { WeatherBadge } from "@/src/components/common/WeatherBadge";
 import { OnboardingTour } from "@/src/components/common/OnboardingTour";
 import { FilterPanel } from "@/src/components/filters/FilterPanel";
 import { MapContainer, type HeatmapFilterType } from "@/src/components/map/MapContainer";
 import { SearchBar } from "@/src/components/search/SearchBar";
 import { RouteSidebar } from "@/src/components/sidebar/RouteSidebar";
 import { useGeolocation } from "@/src/hooks/useGeolocation";
-import { useFastRoutes, useHeatmap, useReroute, useRoutes, useTowerMarkers } from "@/src/hooks/useMapData";
+import { useFastRoutes, useEarlyDeadZones, useHeatmap, useReroute, useRoutes, useTowerMarkers } from "@/src/hooks/useMapData";
 import { useNetworkDetect } from "@/src/hooks/useNetworkDetect";
 import { useTracking } from "@/src/hooks/useTracking";
 import { useAuth } from "@/src/hooks/useAuth";
@@ -23,25 +22,14 @@ import type { TelecomMode, WeatherInfo, CallDropStats, RouteOption } from "@/src
 
 export default function Home() {
   const router = useRouter();
-  const { isAuthenticated, token } = useAuth();
+  const { isAuthenticated, hydrated } = useAuth();
 
-  // Redirect to login if not authenticated (after hydration)
+  // Redirect once AuthProvider has read localStorage and user is not authenticated
   useEffect(() => {
-    if (token === null && typeof window !== "undefined") {
-      // Give AuthProvider one tick to hydrate from localStorage
-      const tid = setTimeout(() => {
-        if (!localStorage.getItem("token")) {
-          router.replace("/login");
-        }
-      }, 50);
-      return () => clearTimeout(tid);
+    if (hydrated && !isAuthenticated) {
+      router.replace("/login");
     }
-  }, [token, router]);
-
-  // Don't render map until we know auth status (avoids flash)
-  if (!isAuthenticated && typeof window !== "undefined" && !localStorage.getItem("token")) {
-    return null;
-  }
+  }, [hydrated, isAuthenticated, router]);
   // Search state -- empty on load
   const [source, setSource] = useState("");
   const [destination, setDestination] = useState("");
@@ -78,7 +66,6 @@ export default function Home() {
   const [offlineReady, setOfflineReady] = useState(false);
   const [alertToast, setAlertToast] = useState<string | null>(null);
   const [weatherInfo, setWeatherInfo] = useState<WeatherInfo | null>(null);
-  const [callDropStats, setCallDropStats] = useState<CallDropStats | null>(null);
 
   // Geolocation
   const geo = useGeolocation();
@@ -116,6 +103,12 @@ export default function Home() {
 
   // Use full routes if available, otherwise show fast routes (heuristic scoring)
   const hasFull = !!routeData?.routes?.length;
+
+  // Early dead zone fetch -- triggered as soon as fast routes arrive, in parallel
+  // with full ML scoring. Gives dead zone warnings ~5-10s faster than waiting for
+  // the full route response which takes 30-60s.
+  const earlyDzEnabled = hasSearched && !!snapshotSrc && !!snapshotDst && !!fastRouteData?.routes?.length && !hasFull;
+  const { data: earlyDeadZoneData } = useEarlyDeadZones(snapshotSrc, snapshotDst, earlyDzEnabled);
   const displayRoutes: RouteOption[] = useMemo(() => {
     if (!hasSearched) return [];
     if (hasFull) return routeData.routes;
@@ -146,6 +139,27 @@ export default function Home() {
   const { position: trackingPosition, progress: trackingProgress } = useTracking(trackingPath, trackingActive);
 
   const etaDisplay = selectedRoute ? `${selectedRoute.eta} min` : "--";
+
+  // Dynamic call drop stats: recomputed whenever selected route changes.
+  // Compares the currently selected route's drop count vs the worst alternative.
+  const callDropStats: CallDropStats | null = useMemo(() => {
+    if (!routes.length || !hasFull) return null;
+    const selDrops = selectedRoute?.segment_drop_count ?? 0;
+    const altDrops = routes
+      .filter((_, i) => i !== selectedRouteIndex)
+      .map((r) => r.segment_drop_count ?? 0);
+    const worstAlt = altDrops.length > 0 ? Math.max(...altDrops) : selDrops;
+    const avoided = Math.max(0, worstAlt - selDrops);
+    let message: string;
+    if (avoided > 0) {
+      message = `~${avoided} potential call drop(s) avoided by choosing this route`;
+    } else if (selDrops === 0) {
+      message = "No call drop risk on this route";
+    } else {
+      message = `${selDrops} weak segment(s) with potential call drop risk`;
+    }
+    return { drops_avoided: avoided, recommended_drops: selDrops, worst_alternative_drops: worstAlt, message };
+  }, [routes, selectedRouteIndex, selectedRoute, hasFull]);
 
   // -----------------------------------------------------------------------
   // Periodic re-prediction during active navigation
@@ -284,17 +298,19 @@ export default function Home() {
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [trackingActive, trackingPosition, selectedRoute]);
 
-  // Extract weather + call-drop stats from route response
+  // Extract weather from route response
   useEffect(() => {
     if (routeData?.weather) setWeatherInfo(routeData.weather);
-    if (routeData?.call_drop_stats) setCallDropStats(routeData.call_drop_stats);
   }, [routeData]);
 
   // Offline cache alert: warn user when a dead zone is approaching
   const offlineAlert = selectedRoute?.offline_alerts?.[0]?.message ?? null;
 
-  // Dead zone warning from carrier-level prediction
-  const deadZoneCount = selectedRoute?.carrier_dead_zones?.length ?? 0;
+  // Dead zone warning: prefer per-route data from full response, fall back to
+  // early dead zone fetch (arrives ~5-10s after fast routes, before full ML scoring).
+  const fullDeadZoneCount = selectedRoute?.carrier_dead_zones?.length ?? 0;
+  const earlyDeadZoneCount = (!hasFull && earlyDeadZoneData) ? (earlyDeadZoneData.total_dead_zones ?? 0) : 0;
+  const deadZoneCount = fullDeadZoneCount > 0 ? fullDeadZoneCount : earlyDeadZoneCount;
   const deadZoneWarning = deadZoneCount > 0
     ? `${deadZoneCount} dead zone(s) ahead where all carriers are weak`
     : null;
@@ -433,6 +449,11 @@ export default function Home() {
     [],
   );
 
+  // While auth is hydrating or user is not authenticated, show nothing
+  if (!hydrated || !isAuthenticated) {
+    return null;
+  }
+
   return (
     <div className="relative h-screen w-screen overflow-hidden bg-white">
       {/* Full-screen map */}
@@ -499,14 +520,8 @@ export default function Home() {
         detectedNetwork={networkInfo.type}
         heatmapFilter={heatmapFilter}
         onHeatmapFilterChange={setHeatmapFilter}
+        weather={weatherInfo}
       />
-
-      {/* Weather badge (top-right, below filter panel) */}
-      {weatherInfo && (
-        <div className="absolute top-52 right-4 z-[1000]">
-          <WeatherBadge weather={weatherInfo} />
-        </div>
-      )}
 
       {/* Call-drop stats badge */}
       {callDropStats && callDropStats.drops_avoided > 0 && (

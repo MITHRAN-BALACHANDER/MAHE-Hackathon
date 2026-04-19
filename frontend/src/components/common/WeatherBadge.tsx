@@ -50,28 +50,31 @@ export function WeatherBadge({ weather }: Props) {
           : "bg-red-500/10 border-red-500/20";
 
   return (
-    <div className="relative flex flex-col items-end gap-2">
+    <div className="relative flex items-end flex-col">
       {/* Collapsed icon button */}
       <button
         type="button"
         onClick={() => setOpen((v) => !v)}
         title={`${weather.description} · ${weather.temperature_c}°C — click for details`}
-        className="glass-card rounded-xl p-1.5 flex items-center gap-1.5 cursor-pointer hover:brightness-110 transition-all"
+        className="w-full flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg bg-white/[0.04] hover:bg-white/[0.08] border border-white/[0.08] cursor-pointer transition-all"
       >
         {/* eslint-disable-next-line @next/next/no-img-element */}
         <img
           src={`https://openweathermap.org/img/wn/${weather.icon}.png`}
           alt={weather.condition}
-          width={30}
-          height={30}
+          width={22}
+          height={22}
           className="shrink-0"
         />
-        <span className="text-xs font-semibold text-white/90 pr-1">
+        <span className="text-[11px] font-semibold text-white/80 flex-1 text-left truncate capitalize">
+          {weather.description}
+        </span>
+        <span className="text-[11px] font-bold text-white/90 shrink-0">
           {weather.temperature_c}°C
         </span>
       </button>
 
-      {/* Expanded panel */}
+      {/* Expanded panel -- absolute so it overlays without pushing content */}
       <AnimatePresence>
         {open && (
           <motion.div
@@ -79,7 +82,7 @@ export function WeatherBadge({ weather }: Props) {
             animate={{ opacity: 1, y: 0, scale: 1 }}
             exit={{ opacity: 0, y: -6, scale: 0.96 }}
             transition={{ duration: 0.18 }}
-            className="glass-card rounded-2xl p-4 w-64 text-sm shadow-xl"
+            className="absolute right-0 top-full mt-2 z-[1200] glass-card rounded-2xl p-4 w-64 text-sm shadow-xl"
           >
             {/* Header row */}
             <div className="flex items-center justify-between mb-3">

@@ -13,18 +13,21 @@ interface AuthContextType {
   setToken: (token: string | null) => void;
   logout: () => void;
   isAuthenticated: boolean;
+  hydrated: boolean;
 }
 
 const AuthContext = createContext<AuthContextType | undefined>(undefined);
 
 export const AuthProvider = ({ children }: { children: ReactNode }) => {
   const [token, setToken] = useState<string | null>(null);
+  const [hydrated, setHydrated] = useState(false);
 
   useEffect(() => {
     const storedToken = localStorage.getItem("token");
     if (storedToken) {
       setToken(storedToken);
     }
+    setHydrated(true);
   }, []);
 
   const handleSetToken = (newToken: string | null) => {
@@ -47,6 +50,7 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
         setToken: handleSetToken,
         logout,
         isAuthenticated: !!token,
+        hydrated,
       }}
     >
       {children}

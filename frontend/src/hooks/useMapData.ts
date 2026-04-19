@@ -2,8 +2,7 @@
 
 import { useMutation, useQuery } from "@tanstack/react-query";
 
-import { heatmapService, predictionService, routeService, towerService, towerGeoService } from "@/src/services/api";
-import type { RerouteRequest, RouteQueryParams } from "@/src/types/route";
+import { deadZoneService, heatmapService, predictionService, routeService, towerService, towerGeoService } from "@/src/services/api";import type { RerouteRequest, RouteQueryParams } from "@/src/types/route";
 
 /**
  * Fast route fetch -- geometry only, no ML scoring.
@@ -69,6 +68,21 @@ export function useTowerMarkers() {
     queryKey: ["tower-markers"],
     queryFn: () => towerGeoService.fetchAll(500),
     staleTime: 5 * 60_000,
+    retry: 1,
+  });
+}
+
+/**
+ * Early dead zone fetch — triggered as soon as Phase 1 (fast routes) completes.
+ * Runs in parallel with full ML scoring so dead zone warnings appear sooner.
+ * Disabled once full route data is available (routes embed dead zones directly).
+ */
+export function useEarlyDeadZones(source: string, destination: string, enabled: boolean) {
+  return useQuery({
+    queryKey: ["early-dead-zones", source, destination],
+    queryFn: () => deadZoneService.predict(source, destination),
+    enabled: enabled && !!source && !!destination,
+    staleTime: 60_000,
     retry: 1,
   });
 }

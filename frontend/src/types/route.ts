@@ -49,6 +49,8 @@ export type RouteOption = {
   longest_stable_window?: number;
   // Bad zone predictions
   bad_zones?: BadZone[];
+  // Per-route call drop count (segments where drop_prob > 0.5)
+  segment_drop_count?: number;
   // Multi-SIM
   multi_sim?: MultiSimInfo;
   // Per-carrier dead zones
