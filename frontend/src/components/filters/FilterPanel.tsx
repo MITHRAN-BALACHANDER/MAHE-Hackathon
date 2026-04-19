@@ -1,6 +1,6 @@
 "use client";
 
-import { MessageCircle, Signal, CloudRain, Car, Route, Check, X } from "lucide-react";
+import { MessageCircle, Signal, Car, Check, X } from "lucide-react";
 import { useState } from "react";
 import type { TelecomMode } from "@/src/types/route";
 import type { WeatherInfo } from "@/src/types/route";
@@ -23,9 +23,7 @@ const HEATMAP_OPTIONS: {
   activeBg: string;
 }[] = [
   { value: "signal",  label: "Signal",  icon: Signal,   color: "#22c55e", activeBg: "rgba(34,197,94,0.15)" },
-  { value: "weather", label: "Weather", icon: CloudRain, color: "#a855f7", activeBg: "rgba(168,85,247,0.15)" },
   { value: "traffic", label: "Traffic", icon: Car,       color: "#f97316", activeBg: "rgba(249,115,22,0.15)" },
-  { value: "road",    label: "Road",    icon: Route,     color: "#3b82f6", activeBg: "rgba(59,130,246,0.15)" },
 ];
 
 type Props = {
@@ -119,7 +117,7 @@ export function FilterPanel({
           {onHeatmapFilterChange && (
             <div className="p-3 border-b border-white/[0.06]">
               <p className="text-[10px] font-semibold uppercase tracking-wider text-white/35 mb-2">Heatmap</p>
-              <div className="grid grid-cols-4 gap-1">
+              <div className="grid grid-cols-2 gap-1">
                 {HEATMAP_OPTIONS.map((opt) => {
                   const isActive = heatmapFilter === opt.value;
                   return (

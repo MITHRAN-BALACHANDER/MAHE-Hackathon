@@ -397,6 +397,19 @@ _ROUTE_NAMES = [
 ]
 _MAX_ROUTES = 7  # hard cap on routes returned to the frontend
 
+# -----------------------------------------------------------------------
+# Route geometry cache -- shared across /api/routes, /api/dead-zones, etc.
+# Avoids redundant TomTom calls and tower fetches when parallel requests
+# arrive for the same source/destination within a short window.
+# -----------------------------------------------------------------------
+_GEOM_CACHE_TTL = 90  # seconds
+_geom_cache: dict[str, tuple[float, list[dict]]] = {}
+_geom_cache_locks: dict[str, asyncio.Lock] = {}
+
+
+def _geom_cache_key(src: tuple[float, float], dst: tuple[float, float]) -> str:
+    return f"{round(src[0], 3)},{round(src[1], 3)}|{round(dst[0], 3)},{round(dst[1], 3)}"
+
 
 async def _generate_routes(
     src: tuple[float, float], dst: tuple[float, float],
@@ -405,74 +418,105 @@ async def _generate_routes(
 
     After building geometry, fetches real cell towers from OpenCelliD along
     each route and attaches them as ``route["towers"]`` for the scoring model.
+
+    Results are cached for 90s so parallel callers (e.g. /api/routes and
+    /api/dead-zones) share the same TomTom + tower data.
     """
-    if not _tomtom._api_key:
-        routes = _generate_routes_sync(src, dst)
-    else:
-        try:
-            tt_routes = await _tomtom.get_routes(src, dst)
-        except Exception:
+    import copy as _copy
+
+    gk = _geom_cache_key(src, dst)
+
+    # Check cache first (fast path, no lock needed)
+    entry = _geom_cache.get(gk)
+    if entry is not None:
+        ts, cached_routes = entry
+        if _time.time() - ts <= _GEOM_CACHE_TTL:
+            return _copy.deepcopy(cached_routes)
+        else:
+            _geom_cache.pop(gk, None)
+
+    # Acquire per-key lock so only one caller fetches routes for a given src/dst
+    if gk not in _geom_cache_locks:
+        _geom_cache_locks[gk] = asyncio.Lock()
+    async with _geom_cache_locks[gk]:
+        # Double-check after acquiring lock
+        entry = _geom_cache.get(gk)
+        if entry is not None:
+            ts, cached_routes = entry
+            if _time.time() - ts <= _GEOM_CACHE_TTL:
+                return _copy.deepcopy(cached_routes)
+
+        # -- actual route generation --
+        if not _tomtom._api_key:
             routes = _generate_routes_sync(src, dst)
         else:
-            if not tt_routes or not tt_routes[0].get("geometry"):
+            try:
+                tt_routes = await _tomtom.get_routes(src, dst)
+            except Exception:
                 routes = _generate_routes_sync(src, dst)
             else:
-                total_dist = haversine(src[0], src[1], dst[0], dst[1])
-                routes = []
-                for i, tt in enumerate(tt_routes):
-                    path = tt["geometry"]
-                    dist_km = 0.0
-                    for j in range(len(path) - 1):
-                        dist_km += haversine(
-                            path[j]["lat"], path[j]["lng"],
-                            path[j + 1]["lat"], path[j + 1]["lng"],
-                        )
-                    dist_km = dist_km if dist_km > 0 else total_dist
-                    name = _ROUTE_NAMES[i] if i < len(_ROUTE_NAMES) else f"Route {i + 1}"
-                    zones = _zones_along_path(path)
-                    routes.append({
-                        "name": name,
-                        "eta": tt["eta"],
-                        "distance": round(dist_km, 1),
-                        "path": path,
-                        "zones": zones,
-                        "traffic_delay": tt.get("traffic_delay", 0),
-                    })
-                # Cap at _MAX_ROUTES
-                routes = routes[:_MAX_ROUTES]
+                if not tt_routes or not tt_routes[0].get("geometry"):
+                    routes = _generate_routes_sync(src, dst)
+                else:
+                    total_dist = haversine(src[0], src[1], dst[0], dst[1])
+                    routes = []
+                    for i, tt in enumerate(tt_routes):
+                        path = tt["geometry"]
+                        dist_km = 0.0
+                        for j in range(len(path) - 1):
+                            dist_km += haversine(
+                                path[j]["lat"], path[j]["lng"],
+                                path[j + 1]["lat"], path[j + 1]["lng"],
+                            )
+                        dist_km = dist_km if dist_km > 0 else total_dist
+                        name = _ROUTE_NAMES[i] if i < len(_ROUTE_NAMES) else f"Route {i + 1}"
+                        zones = _zones_along_path(path)
+                        routes.append({
+                            "name": name,
+                            "eta": tt["eta"],
+                            "distance": round(dist_km, 1),
+                            "path": path,
+                            "zones": zones,
+                            "traffic_delay": tt.get("traffic_delay", 0),
+                        })
+                    # Cap at _MAX_ROUTES
+                    routes = routes[:_MAX_ROUTES]
 
-                # If TomTom returned fewer than 5 routes, pad with synthetic
-                # alternatives so the map always shows visually distinct paths.
-                if len(routes) < 5:
-                    synthetic = _generate_routes_sync(src, dst)
-                    existing_names = {r["name"] for r in routes}
-                    for syn in synthetic:
-                        if len(routes) >= 5:
-                            break
-                        if syn["name"] not in existing_names:
-                            routes.append(syn)
+                    # If TomTom returned fewer than 5 routes, pad with synthetic
+                    # alternatives so the map always shows visually distinct paths.
+                    if len(routes) < 5:
+                        synthetic = _generate_routes_sync(src, dst)
+                        existing_names = {r["name"] for r in routes}
+                        for syn in synthetic:
+                            if len(routes) >= 5:
+                                break
+                            if syn["name"] not in existing_names:
+                                routes.append(syn)
 
-    # Fetch real cell towers along each route from OpenCelliD (parallel via executor)
-    loop = asyncio.get_event_loop()
+        # Fetch real cell towers along each route from OpenCelliD (parallel via executor)
+        loop = asyncio.get_event_loop()
 
-    async def _fetch_for_route(path: list[dict]) -> pd.DataFrame:
-        return await loop.run_in_executor(
-            None,
-            lambda: fetch_towers_for_path(path, sample_every_n=30, max_towers=150, radius_km=0.8),
-        )
+        async def _fetch_for_route(path: list[dict]) -> pd.DataFrame:
+            return await loop.run_in_executor(
+                None,
+                lambda: fetch_towers_for_path(path, sample_every_n=30, max_towers=150, radius_km=0.8),
+            )
 
-    tower_tasks = [_fetch_for_route(r["path"]) for r in routes]
-    per_route_towers = await asyncio.gather(*tower_tasks)
+        tower_tasks = [_fetch_for_route(r["path"]) for r in routes]
+        per_route_towers = await asyncio.gather(*tower_tasks)
 
-    # Attach real towers; fall back to global cached data if API returned nothing
-    fallback_towers = _get_towers()
-    for route, rt in zip(routes, per_route_towers):
-        if rt is not None and not rt.empty:
-            route["towers"] = rt
-        else:
-            route["towers"] = fallback_towers
+        # Attach real towers; fall back to global cached data if API returned nothing
+        fallback_towers = _get_towers()
+        for route, rt in zip(routes, per_route_towers):
+            if rt is not None and not rt.empty:
+                route["towers"] = rt
+            else:
+                route["towers"] = fallback_towers
 
-    return routes
+        # Store in geometry cache
+        _geom_cache[gk] = (_time.time(), _copy.deepcopy(routes))
+
+        return routes
 
 
 # =======================================================================
@@ -815,11 +859,17 @@ async def api_routes(
 
 @app.get("/api/heatmap")
 async def api_heatmap(layer: str = Query("signal")):
-    """Heatmap data for all Bangalore zones. Supports layer=signal|weather|traffic|road."""
+    """Heatmap data for all Bangalore zones. Supports layer=signal|weather|traffic|road.
+
+    Returns zone data with ``radius_km`` for proper map circle sizing.
+    For the ``signal`` layer, a dense grid of predictions fills gaps between
+    named zones so that all areas show coverage.
+    """
     towers_df = _get_towers()
     zones = []
 
     if layer == "signal":
+        # 1) Named zones -- run ML per zone center
         for name, info in ZONES.items():
             lat, lng = info["center"]
             try:
@@ -828,16 +878,65 @@ async def api_heatmap(layer: str = Query("signal")):
                 score = result["signal_strength"]
             except Exception:
                 score = 50.0
-            if score >= 70:
+            if score >= 30:
                 strength, color = "strong", "#22c55e"
-            elif score >= 40:
+            elif score >= 5:
                 strength, color = "medium", "#eab308"
             else:
                 strength, color = "weak", "#ef4444"
             zones.append({
                 "name": name, "lat": lat, "lng": lng,
                 "score": round(score, 1), "label": strength, "color": color,
+                "radius_km": info["radius_km"],
             })
+
+        # 2) Dense grid fill -- cover empty areas between named zones.
+        #    Sample every ~2.5 km across the Bangalore bounding box and skip
+        #    points that already fall inside a named zone's radius.
+        _grid_step = 0.022  # ~2.5 km in degrees
+        _lat_lo, _lat_hi = 12.78, 13.22  # extended north to include airport
+        _lng_lo, _lng_hi = 77.45, 77.82
+
+        named_centers = [(info["center"][0], info["center"][1], info["radius_km"])
+                         for info in ZONES.values()]
+
+        grid_lat = _lat_lo
+        grid_idx = 0
+        while grid_lat <= _lat_hi:
+            grid_lng = _lng_lo
+            while grid_lng <= _lng_hi:
+                # Skip if inside any named zone
+                inside = False
+                for clat, clng, rkm in named_centers:
+                    dist_km = haversine(grid_lat, grid_lng, clat, clng)
+                    if dist_km <= rkm * 1.1:
+                        inside = True
+                        break
+                if not inside:
+                    try:
+                        feats = extract_features(grid_lat, grid_lng, towers_df, 12.0, 1.0, 40.0)
+                        result = predict_single(feats)
+                        score = result["signal_strength"]
+                    except Exception:
+                        score = 35.0
+                    if score >= 30:
+                        strength, color = "strong", "#22c55e"
+                    elif score >= 5:
+                        strength, color = "medium", "#eab308"
+                    else:
+                        strength, color = "weak", "#ef4444"
+                    zones.append({
+                        "name": f"Area ({grid_lat:.2f}, {grid_lng:.2f})",
+                        "lat": round(grid_lat, 4),
+                        "lng": round(grid_lng, 4),
+                        "score": round(score, 1),
+                        "label": strength,
+                        "color": color,
+                        "radius_km": 1.4,  # fill radius
+                    })
+                    grid_idx += 1
+                grid_lng += _grid_step
+            grid_lat += _grid_step
 
     elif layer == "weather":
         for name, info in ZONES.items():
@@ -858,6 +957,7 @@ async def api_heatmap(layer: str = Query("signal")):
             zones.append({
                 "name": name, "lat": lat, "lng": lng,
                 "score": score, "label": f"{label} ({condition})", "color": color,
+                "radius_km": info["radius_km"],
             })
 
     elif layer == "traffic":
@@ -895,6 +995,7 @@ async def api_heatmap(layer: str = Query("signal")):
             zones.append({
                 "name": name, "lat": lat, "lng": lng,
                 "score": score, "label": label, "color": color,
+                "radius_km": info["radius_km"],
             })
 
     elif layer == "road":
@@ -913,6 +1014,7 @@ async def api_heatmap(layer: str = Query("signal")):
             zones.append({
                 "name": name, "lat": lat, "lng": lng,
                 "score": score, "label": label, "color": color,
+                "radius_km": info["radius_km"],
             })
 
     else:

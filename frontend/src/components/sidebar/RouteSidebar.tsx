@@ -1,6 +1,7 @@
 ﻿"use client";
 
-import { AlertTriangle, ChevronLeft, Clock, MapPin, Navigation, Signal, Shield, Square, Wifi } from "lucide-react";
+import { useState } from "react";
+import { AlertTriangle, ArrowLeft, ChevronLeft, Clock, MapPin, Navigation, Shield, Square, Wifi } from "lucide-react";
 import type { RouteOption } from "@/src/types/route";
 
 type Props = {
@@ -17,10 +18,33 @@ type Props = {
   enriching?: boolean;
 };
 
-function signalBadge(score: number) {
-  if (score >= 70) return { label: "Strong", color: "bg-emerald-500/20 text-emerald-400 ring-emerald-500/30" };
-  if (score >= 40) return { label: "Medium", color: "bg-amber-500/20 text-amber-400 ring-amber-500/30" };
-  return { label: "Weak", color: "bg-red-500/20 text-red-400 ring-red-500/30" };
+function signalInfo(score: number) {
+  if (score >= 70) return { filled: 4, color: "#22c55e", glow: "rgba(34,197,94,0.25)", label: "Strong" };
+  if (score >= 50) return { filled: 3, color: "#eab308", glow: "rgba(234,179,8,0.25)", label: "Good" };
+  if (score >= 30) return { filled: 2, color: "#f97316", glow: "rgba(249,115,22,0.25)", label: "Fair" };
+  return { filled: 1, color: "#ef4444", glow: "rgba(239,68,68,0.25)", label: "Weak" };
+}
+
+/** Signal bars icon: 4 bars, filled count based on score, colored by strength. */
+function SignalBars({ score, size = 16 }: { score: number; size?: number }) {
+  const info = signalInfo(score);
+  const heights = [5, 8, 11, 14];
+  const scale = size / 16;
+  return (
+    <svg width={16 * scale} height={14 * scale} viewBox="0 0 16 14" fill="none" className="shrink-0">
+      {heights.map((h, i) => (
+        <rect
+          key={i}
+          x={i * 4}
+          y={14 - h}
+          width="3"
+          height={h}
+          rx="0.5"
+          fill={i < info.filled ? info.color : "rgba(255,255,255,0.12)"}
+        />
+      ))}
+    </svg>
+  );
 }
 
 function stabilityLabel(score: number | undefined) {
@@ -43,12 +67,126 @@ export function RouteSidebar({
   onStartNavigation,
   onStopNavigation,
 }: Props) {
+  // "detail" view: shows selected route info with start/back buttons
+  // "list" view: shows all routes
+  const [view, setView] = useState<"list" | "detail">("list");
+
   if (!visible || routes.length === 0) return null;
+
+  const selectedRoute = routes[selectedIndex] ?? routes[0];
+  const sig = signalInfo(selectedRoute.signal_score);
+  const isSuggested = selectedRoute.name === suggestedRoute;
+
+  // When tracking is active, always show the detail/navigation view
+  const showDetail = tracking || view === "detail";
 
   return (
     <div className="absolute top-[207px] left-3 z-[800] max-h-[calc(100vh-217px)] w-[360px] glass-card flex flex-col rounded-2xl overflow-hidden animate-slide-in-left">
-      {/* Header */}
-      <div className="flex items-center gap-2 px-4 py-3 border-b border-slate-700/60">
+      {showDetail ? (
+        /* ========== DETAIL / NAVIGATION VIEW ========== */
+        <>
+          {/* Signal strength strip */}
+          <div
+            className="h-[3px] w-full shrink-0"
+            style={{ background: `linear-gradient(90deg, ${sig.color}00 0%, ${sig.color} 30%, ${sig.color} 70%, ${sig.color}00 100%)` }}
+          />
+
+          <div className="px-4 pt-3 pb-4">
+            {/* Back + route info row */}
+            <div className="flex items-center gap-3 mb-4">
+              {!tracking && (
+                <button
+                  type="button"
+                  onClick={() => setView("list")}
+                  className="p-1.5 hover:bg-white/10 rounded-full cursor-pointer transition-colors shrink-0"
+                >
+                  <ArrowLeft size={18} className="text-white/60" />
+                </button>
+              )}
+              {tracking && (
+                <button
+                  type="button"
+                  onClick={() => { onStopNavigation?.(); setView("list"); }}
+                  className="p-1.5 hover:bg-white/10 rounded-full cursor-pointer transition-colors shrink-0"
+                >
+                  <ArrowLeft size={18} className="text-white/60" />
+                </button>
+              )}
+
+              {/* Signal bars with glow */}
+              <div
+                className="flex items-end gap-[2px] p-2 rounded-lg shrink-0"
+                style={{ background: sig.glow }}
+              >
+                {[6, 10, 14, 18].map((h, i) => (
+                  <div
+                    key={i}
+                    className="w-[4px] rounded-[1px]"
+                    style={{
+                      height: h,
+                      backgroundColor: i < sig.filled ? sig.color : "rgba(255,255,255,0.1)",
+                    }}
+                  />
+                ))}
+              </div>
+
+              <div className="min-w-0 flex-1">
+                <p className="text-[11px] text-white/35 leading-none mb-1">
+                  {tracking ? "Navigating" : "Selected route"}
+                </p>
+                <p className="text-[13px] font-semibold text-white truncate leading-none">
+                  {selectedRoute.name}
+                </p>
+              </div>
+
+              {isSuggested && (
+                <span className="text-[9px] font-bold bg-emerald-500/20 text-emerald-400 px-2 py-0.5 rounded-full shrink-0">
+                  Suggested
+                </span>
+              )}
+            </div>
+
+            {/* Stats */}
+            <div className="flex items-center gap-2 mb-4">
+              <div className="flex-1 flex items-center justify-center gap-1.5 bg-slate-800/80 rounded-lg py-2.5">
+                <Clock size={12} className="text-cyan-400" />
+                <span className="text-[13px] font-bold text-white">{selectedRoute.eta}</span>
+                <span className="text-[10px] text-white/35">min</span>
+              </div>
+              <div className="flex-1 flex items-center justify-center gap-1.5 bg-slate-800/80 rounded-lg py-2.5">
+                <MapPin size={12} className="text-blue-400" />
+                <span className="text-[13px] font-bold text-white">{selectedRoute.distance}</span>
+                <span className="text-[10px] text-white/35">km</span>
+              </div>
+            </div>
+
+            {/* Start / Stop button */}
+            {tracking ? (
+              <button
+                type="button"
+                onClick={() => { onStopNavigation?.(); setView("list"); }}
+                className="group w-full flex items-center justify-center gap-2.5 py-3 bg-red-500/15 hover:bg-red-500/25 text-red-400 text-sm font-semibold rounded-xl cursor-pointer transition-all border border-red-500/30 hover:border-red-500/50"
+              >
+                <Square size={14} />
+                Stop Navigation
+              </button>
+            ) : (
+              <button
+                type="button"
+                onClick={onStartNavigation}
+                className="group w-full flex items-center justify-center gap-2.5 py-3 bg-gradient-to-r from-cyan-500 to-blue-600 hover:from-cyan-400 hover:to-blue-500 text-white text-sm font-bold rounded-xl cursor-pointer transition-all shadow-[0_0_20px_rgba(6,182,212,0.3)] hover:shadow-[0_0_28px_rgba(6,182,212,0.45)]"
+              >
+                <Navigation size={14} />
+                Start Navigation
+              </button>
+            )}
+          </div>
+        </>
+      ) : (
+        /* ========== ROUTE LIST VIEW ========== */
+        <>
+          {/* Header */}
+          <div className="flex items-center gap-2 px-4 py-3 border-b border-slate-700/60">
         <button
           type="button"
           onClick={onClose}
@@ -70,7 +208,6 @@ export function RouteSidebar({
         {routes.map((route, i) => {
           const isSelected = i === selectedIndex;
           const isSuggested = route.name === suggestedRoute;
-          const badge = signalBadge(route.signal_score);
           const stability = stabilityLabel(route.stability_score);
           const isRejected = route.rejected === true;
           const hasBadZones = (route.bad_zones?.length ?? 0) > 0;
@@ -80,7 +217,7 @@ export function RouteSidebar({
             <button
               key={route.name}
               type="button"
-              onClick={() => onSelect(i)}
+              onClick={() => { onSelect(i); setView("detail"); }}
               className={`w-full text-left px-4 py-3.5 border-b border-slate-700/30 cursor-pointer transition-all duration-200 ${
                 isRejected
                   ? "bg-red-500/10 border-l-4 border-l-red-500/50 opacity-60"
@@ -128,14 +265,11 @@ export function RouteSidebar({
                   <span className="text-sm font-bold text-white leading-none">{route.distance}</span>
                   <span className="text-[10px] text-white/40 leading-none">km</span>
                 </div>
-                {/* Signal badge */}
-                <span
-                  className={`flex items-center gap-1 px-2 py-1.5 rounded-lg text-[11px] font-semibold ring-1 ${badge.color}`}
-                >
-                  <Signal size={10} />
-                  {badge.label} {Math.round(route.signal_score)}
-                  {enriching && <span className="ml-0.5 text-white/30 animate-pulse">~</span>}
-                </span>
+                {/* Signal bars -- color only, no number */}
+                <div className="flex items-end gap-[2px] bg-slate-800 rounded-lg px-2.5 py-[7px] min-w-0">
+                  <SignalBars score={route.signal_score} />
+                  {enriching && <span className="ml-1 text-white/30 animate-pulse text-[10px]">~</span>}
+                </div>
               </div>
 
               {/* Stability row */}
@@ -205,27 +339,33 @@ export function RouteSidebar({
       </div>
 
       {/* Start / Stop navigation footer */}
-      <div className="px-4 py-3 border-t border-slate-700/60 shrink-0">
+      <div className="px-4 py-3.5 border-t border-slate-700/60 shrink-0">
         {tracking ? (
           <button
             type="button"
-            onClick={onStopNavigation}
-            className="w-full flex items-center justify-center gap-2 py-2.5 bg-red-500/90 hover:bg-red-500 text-white text-sm font-semibold rounded-xl cursor-pointer transition-all shadow-lg shadow-red-500/20"
+            onClick={() => { onStopNavigation?.(); }}
+            className="group w-full flex items-center justify-center gap-2.5 py-3 bg-red-500/15 hover:bg-red-500/25 text-red-400 text-sm font-semibold rounded-xl cursor-pointer transition-all border border-red-500/30 hover:border-red-500/50"
           >
-            <Square size={15} />
+            <div className="p-1 bg-red-500/20 rounded-lg group-hover:bg-red-500/30 transition-colors">
+              <Square size={14} />
+            </div>
             Stop Navigation
           </button>
         ) : (
           <button
             type="button"
-            onClick={onStartNavigation}
-            className="w-full flex items-center justify-center gap-2 py-2.5 bg-gradient-to-r from-cyan-500 to-blue-600 hover:from-cyan-400 hover:to-blue-500 text-white text-sm font-semibold rounded-xl cursor-pointer transition-all shadow-lg shadow-cyan-500/20"
+            onClick={() => setView("detail")}
+            className="group w-full relative flex items-center justify-center gap-2.5 py-3 bg-gradient-to-r from-cyan-500 to-blue-600 hover:from-cyan-400 hover:to-blue-500 text-white text-sm font-bold rounded-xl cursor-pointer transition-all shadow-[0_0_20px_rgba(6,182,212,0.25)] hover:shadow-[0_0_28px_rgba(6,182,212,0.35)]"
           >
-            <Navigation size={15} />
-            Start Navigation
+            <div className="p-1 bg-white/15 rounded-lg group-hover:bg-white/25 transition-colors">
+              <Navigation size={14} />
+            </div>
+            View Route
           </button>
         )}
       </div>
+        </>
+      )}
     </div>
   );
 }

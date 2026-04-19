@@ -140,6 +140,7 @@ export type HeatmapZone = {
   score: number;
   label: string;
   color: string;
+  radius_km?: number;
 };
 
 export type HeatmapResponse = {

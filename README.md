@@ -1,31 +1,62 @@
 # SignalRoute AI -- Cellular Network-Aware Routing System
 
-A smart navigation platform that recommends routes based on **cellular network reliability** alongside ETA and distance. Traditional map apps ignore mobile connectivity -- SignalRoute fixes that.
+An ML-powered navigation platform that recommends routes based on **predicted cellular signal quality** alongside ETA and distance. Traditional routing engines (Google Maps, Waze) optimize purely for time -- SignalRoute adds network awareness to prevent dropped calls, lost connectivity, and dead zone interruptions.
 
 **Problems solved:**
-- Calls dropping mid-route
-- Ride-hailing apps disconnecting
-- Fleet tracking going offline
-- Emergency SOS failing to send
-- Navigation updates stopping in dead zones
-- Video/music buffering on highways
+- Calls dropping mid-route through dead zones
+- Ride-hailing apps disconnecting in weak coverage areas
+- Fleet tracking going offline on certain highways
+- Emergency SOS failing to send in tunnels or underpasses
+- Navigation updates stopping in areas with no signal
+- Video/music buffering on routes through low-density zones
 
 ## How It Works
 
 ```
 User enters source + destination
          |
-   3 candidate routes generated (OSRM / mock)
+   TomTom Routing API generates up to 7 road-snapped alternatives
          |
-   Each route sampled every 500m
+   Each route path sampled at 500m intervals
          |
-   ML model predicts signal strength + drop probability per point
+   ResidualSignalNet (PyTorch) predicts signal strength + drop probability per point
          |
-   Routes scored: final_score = weight * signal + (1 - weight) * speed
+   Physics validation via COST-231 Hata + Ericsson 9999 propagation ensemble
+         |
+   Routes scored: weighted_score = preference * signal_norm + (1-preference) * eta_norm
+         |
+   Dead zone detection identifies contiguous weak segments per carrier
          |
    RL (Thompson Sampling) personalizes weights per user over time
          |
-   Ranked results displayed on map with signal heatmap overlay
+   Ranked results displayed on Mapbox GL JS map with signal heatmap overlay
+```
+
+## Architecture Overview
+
+```
+[Browser / Vehicle]
+       |
+       | HTTP (localhost:3000)
+       v
+[Next.js 16 Frontend]     <--- React 19, Mapbox GL JS, TanStack Query
+       |
+       | Axios (localhost:8000)
+       v
+[FastAPI Backend Server]   <--- 39 endpoints across /api/*, /model/*, /api/v1/*
+       |
+       |--- TomTom Routing API       (road-snapped geometry, live traffic)
+       |--- OpenCelliD               (real cell tower lat/lng, 601 towers)
+       |--- OpenWeather API          (real-time weather impact factor)
+       |--- TomTom Traffic Flow API  (live congestion + incidents)
+       |--- Nominatim                (forward/reverse geocoding)
+       |
+       v
+[ML Model Layer]
+       |--- ResidualSignalNet        (PyTorch, 560K params, multi-task)
+       |--- COST-231 Hata + Ericsson 9999 (physics validation)
+       |--- Thompson Sampling RL     (per-user preference learning)
+       |--- Dead Zone Predictor      (multi-carrier dead zone detection)
 ```
 
 ## Demo
@@ -43,55 +74,57 @@ The user adjusts a preference slider (0 = pure speed, 100 = pure signal) and the
 ## Features
 
 ### Core Navigation
-- **Multi-route comparison** -- Fastest, Balanced, Best Signal with ETA/distance/signal scores
-- **Preference slider** -- Dynamic weight adjustment between speed and connectivity
-- **Carrier filter** -- Route scoring per telecom provider (Jio, Airtel, Vi, All)
-- **Signal heatmap** -- Color-coded zone markers on the map (green/yellow/red)
-- **Dead zone alerts** -- Toast notifications when approaching weak signal areas
-- **Live rerouting** -- Smart reroute button triggers re-scoring from current position
+- **Multi-route comparison** -- Up to 7 TomTom road-snapped alternatives with ETA/distance/signal scores
+- **Two-phase route loading** -- Fast routes appear in 1-2s (heuristic scores), full ML scoring follows in 15-60s
+- **Preference slider** -- Dynamic weight adjustment between speed and connectivity (0-100)
+- **Carrier filter** -- Route scoring per telecom provider (Jio, Airtel, Vi, BSNL) or multi-SIM mode
+- **Signal heatmap** -- Color-coded zone overlay on the map (signal strength, traffic congestion)
+- **Dead zone alerts** -- Toast notifications when approaching weak signal areas across all carriers
+- **Live rerouting** -- Periodic re-evaluation during navigation with automatic reroute if conditions change
+- **Real GPS tracking** -- Live position tracking via browser geolocation API with route progress estimation
 
-### Advanced Optimization
-- **Multi-SIM scoring** -- Scores every route across all carriers (Jio, Airtel, Vi, BSNL), picks best per segment, returns per-carrier breakdown and combined best-of-all score
-- **Signal stability metrics** -- Continuity score (signal standard deviation), longest stable window (consecutive strong segments), and combined stability score (50% continuity + 50% stable fraction)
-- **Hard ETA constraints** -- Configurable max ETA ratio (default 1.5x fastest). Routes exceeding the cap are marked `rejected` and shown with a "Too Slow" badge. Slider in UI from 0 (no limit) to 3x
+### Signal Intelligence
+- **Multi-SIM scoring** -- Scores every route across all carriers independently, picks best per segment, returns per-carrier breakdown and combined best-of-all score
+- **Signal stability metrics** -- Continuity score (signal standard deviation), longest stable window (consecutive strong segments), and combined stability score
+- **Hard ETA constraints** -- Configurable max ETA ratio (default 1.5x fastest). Routes exceeding the cap are marked rejected with a "Too Slow" badge
 - **Predictive bad zone warnings** -- Detects upcoming dead zones with estimated time-to-zone, zone duration, and minimum signal. Displayed in sidebar with edge zone names (tunnels, underpasses)
-- **Offline bundle** -- `/api/offline-bundle` endpoint returns full route data, bad zones, segment signals, and heatmap snapshot. Frontend saves to localStorage for offline access
+- **Offline bundle** -- Full route data, bad zones, segment signals, and heatmap snapshot saved for offline access
+- **Call-drop avoidance** -- Counts segments with drop probability > 0.5 and compares recommended route against worst alternative
 
-### AI / ML
-- **Signal prediction model** -- ResidualSignalNet (PyTorch) with 17-feature input, trained on Bangalore tower data
-- **Thompson Sampling RL** -- Per-user Beta-Bernoulli bandit learns signal vs speed preference over time
-- **Batch prediction** -- All route points scored in a single ML call (no N+1)
-- **Graceful fallback** -- Neutral predictions returned if ML service is unavailable
+### ML / AI
+- **Signal prediction model** -- ResidualSignalNet (PyTorch, 560K params) with 22-feature input, multi-task output (signal strength, drop probability, handoff risk)
+- **Physics validation** -- COST-231 Hata + Ericsson 9999 propagation ensemble cross-checks ML predictions
+- **MC Dropout uncertainty** -- 8 forward passes estimate prediction confidence per segment
+- **Thompson Sampling RL** -- Per-user contextual bandit learns signal vs speed preference over time. Converges in 3-5 trips
+- **Smart intent resolution** -- 10 intents (meeting, call, navigation, streaming, etc.) mapped to preference values with fuzzy matching
+- **Weather-aware scoring** -- OpenWeather API provides real-time weather factor that degrades signal predictions in rain/storms
 
-### Map Intelligence
-- **20 Bangalore zones** -- Each with terrain type, building density, tower coverage
-- **12 edge-case zones** -- Tunnels (45dB penalty), underpasses (20-25dB), urban canyons (10-12dB)
-- **Cell tower overlay** -- SVG tower icons with signal score and color-coded borders
-- **Route polylines** -- Interactive multi-route display with hover effects
-
-### UX
-- **Conversational route finder** -- 5-step chatbot (source, destination, network priority, road quality, ISP)
-- **Geocoding search** -- Free-text location search powered by OpenStreetMap Nominatim (e.g. "MIT Bangalore", "Electronic City", "Hebbal flyover"). Results are debounced and cached; selecting a result passes exact coordinates to the routing engine via `@lat,lng` notation
-- **Geolocation** -- "Use my location" with browser GPS + reverse geocoding
-- **Network auto-detect** -- Detects carrier via Navigator.connection API
-- **Map loading skeleton** -- Spinner overlay until tiles fully render
-- **Simulated tracking** -- Live position animation along selected route
+### Map and UX
+- **Mapbox GL JS** -- WebGL-accelerated map with layered route rendering (glow + casing + main line), smooth camera transitions, pitch/bearing 3D support
+- **Real cell tower overlay** -- 601 towers from OpenCelliD rendered at actual coordinates, color-coded by operator
+- **Draggable A/B pins** -- Drag source/destination markers to reroute interactively
+- **Mapbox Search Box** -- Autocomplete with Bangalore viewbox bias for source/destination
+- **Route detail view** -- Sidebar toggles between route list and selected route detail with signal bars, ETA, distance, and start/stop navigation
+- **Conversational route finder** -- Step-by-step chatbot for route setup (source, destination, network priority, road quality, ISP)
+- **Browser GPS** -- "Use my location" with reverse geocoding to populate source field
+- **Network auto-detect** -- Detects carrier via Navigator.connection API + backend IP lookup
+- **Onboarding tour** -- 5-step guided tour for new users
+- **JWT authentication** -- Login/register with in-memory demo store or MongoDB-backed persistence
 
 ## Tech Stack
 
 ### Frontend
 | Technology | Version | Purpose |
 |------------|---------|---------|
-| Next.js | 16.2.4 | React framework (App Router, Turbopack) |
-| React | 19 | UI library |
-| TypeScript | 5 | Type safety |
-| Tailwind CSS | 4 | Utility-first styling |
-| Leaflet | 1.9.4 | Interactive map |
-| React Query | 5.99 | Async data fetching |
-| Framer Motion | 12.38 | Animations |
+| Next.js | 16.2.4 | React framework (Turbopack dev server) |
+| React | 19 | UI component library |
+| Mapbox GL JS | 3.x | WebGL map rendering, route layers, tower overlay |
+| Mapbox Search JS | 1.x | Autocomplete search box with Bangalore viewbox bias |
+| TanStack Query | 5.x | Async data fetching with caching and retry |
+| Tailwind CSS | 4.x | Utility-first styling |
+| Axios | 1.x | HTTP client for backend API calls |
 | Lucide React | - | Icon library |
-| Chart.js | - | Signal charts |
-| Axios | 1.15 | HTTP client |
+| TypeScript | 5.x | Type safety |
 
 ### Backend
 | Technology | Version | Purpose |
@@ -99,21 +132,27 @@ The user adjusts a preference slider (0 = pure speed, 100 = pure signal) and the
 | FastAPI | 0.115 | Async Python API framework |
 | Uvicorn | 0.30 | ASGI server |
 | Motor | 3.6 | Async MongoDB driver |
-| httpx | 0.26 | Async HTTP client (Nominatim geocoding, ML + OSRM calls) |
+| httpx | 0.26 | Async HTTP client (TomTom, OpenCelliD, OpenWeather, Nominatim) |
 | NumPy | 1.26 | RL sampling (Beta distribution) |
 | PyTorch | 2.x | Signal prediction model |
 | Pydantic | 2.5 | Schema validation |
 | pandas | - | Data processing |
 | scikit-learn | - | Feature preprocessing |
+| python-jose | - | JWT token encoding/decoding |
+| passlib | - | Password hashing (bcrypt) |
 
 ### Infrastructure
 | Component | Technology |
 |-----------|------------|
-| Database | MongoDB (Motor async driver) |
+| Database | MongoDB (Motor async driver) with in-memory fallback |
 | Routing Engine | TomTom Routing API (real road geometry) with OSRM/mock fallback |
-| Geocoding | OpenStreetMap Nominatim (free-text to lat/lon, cached in-memory) |
-| ML Model | PyTorch ResidualSignalNet |
-| Tower Data | OpenCelliD (real) + synthetic fallback |
+| Geocoding | Nominatim (forward/reverse, cached in-memory) |
+| Map Tiles | Mapbox GL JS (WebGL, 3D support) |
+| ML Model | PyTorch ResidualSignalNet (560K params) |
+| Tower Data | OpenCelliD API (601 real towers) + synthetic fallback |
+| Weather | OpenWeather API (real-time conditions) |
+| Traffic | TomTom Traffic Flow + Incidents API |
+| Auth | JWT with dual store (in-memory demo + MongoDB) |
 | Containerization | Docker + Docker Compose |
 
 ## Project Structure
@@ -121,26 +160,32 @@ The user adjusts a preference slider (0 = pure speed, 100 = pure signal) and the
 ```
 signalroute-ai/
 |-- README.md
-|-- .env.example
+|-- analysis.md
 |-- docker-compose.yml
 |-- requirements.txt
 |
-|-- backend/                    # FastAPI backend
-|   |-- main.py                 # Monolithic server (serves frontend)
+|-- backend/                    # FastAPI backend (1,481 lines in main.py)
+|   |-- main.py                 # Monolithic server with 20 endpoints
+|   |-- weather.py              # OpenWeather API integration
+|   |-- crowd_tracker.py        # Crowd density tracking
+|   |-- dead_zone_predictor.py  # Dead zone detection logic
 |   |-- requirements.txt
 |   |-- Dockerfile
 |   |-- docker-compose.yml      # Backend + MongoDB
 |   |-- .env.example
-|   |-- api/                    # HTTP endpoints (no business logic)
-|   |   |-- health.py
-|   |   |-- routes.py
+|   |-- api/                    # Route group endpoints
+|   |   |-- auth.py             # JWT login/register/me (3 endpoints)
+|   |   |-- health.py           # Health check (1 endpoint)
+|   |   |-- routes.py           # Route generation (5 endpoints)
+|   |   |-- network.py          # Network detection (2 endpoints)
 |   |-- app/                    # Application factory
 |   |   |-- main.py             # Clean architecture entry point
 |   |   |-- lifecycle.py        # Startup/shutdown hooks (Mongo connect)
 |   |-- core/                   # Cross-cutting concerns
 |   |   |-- config.py           # Pydantic settings (env-based)
 |   |   |-- logging.py          # Structured logging
-|   |   |-- security.py         # Input validation (user_id, coords, weight)
+|   |   |-- security.py         # Input validation + JWT utilities
+|   |   |-- grpc_bus.py         # gRPC event bus (demo/partial)
 |   |-- db/                     # Database layer (MongoDB + Motor)
 |   |   |-- base.py             # Async client singleton + index creation
 |   |   |-- session.py          # Database accessor
@@ -153,7 +198,9 @@ signalroute-ai/
 |   |   |-- auth.py             # Service factories (Depends)
 |   |   |-- db.py               # Database dependency
 |   |-- routing/                # External routing integration
+|   |   |-- tomtom_client.py    # TomTom Routing API client
 |   |   |-- osrm_client.py      # OSRM HTTP client + mock fallback
+|   |   |-- geocode.py          # Nominatim geocoding client
 |   |   |-- polyline.py         # Google polyline encode/decode
 |   |   |-- route_generator.py  # Convenience wrapper
 |   |-- schemas/                # Pydantic request/response models
@@ -161,7 +208,7 @@ signalroute-ai/
 |   |   |-- signal_schema.py    # SignalPoint, SignalPrediction
 |   |   |-- rl_schema.py        # RLUpdateRequest, RLUpdateResponse
 |   |-- services/               # Business logic (no HTTP concerns)
-|   |   |-- route_service.py    # Main orchestrator: OSRM -> ML -> score -> rank
+|   |   |-- route_service.py    # Main orchestrator: TomTom -> ML -> score -> rank
 |   |   |-- signal_client.py    # Async ML client with retry + cache + fallback
 |   |   |-- scoring_service.py  # Normalize ETA, compute signal/final scores
 |   |   |-- rl_service.py       # Thompson Sampling (Beta-Bernoulli bandit)
@@ -174,55 +221,69 @@ signalroute-ai/
 |       |-- test_routes.py      # 43 tests (scoring, stability, signal, RL, API, utils)
 |
 |-- model/                      # ML signal prediction model
-|   |-- main.py                 # FastAPI app with /model/* endpoints
+|   |-- main.py                 # FastAPI app with 12 /model/* endpoints
+|   |-- run.py                  # CLI entry point (--train / --serve / --evaluate)
 |   |-- config.py               # 20 zones, 12 edge zones, model hyperparams
-|   |-- architecture.py         # ResidualSignalNet (PyTorch)
+|   |-- architecture.py         # ResidualSignalNet (PyTorch, 560K params)
 |   |-- inference.py            # Signal prediction on route segments
 |   |-- scoring.py              # Route scoring logic
-|   |-- propagation.py          # Path loss propagation model
+|   |-- propagation.py          # COST-231 Hata + Ericsson 9999 path loss
 |   |-- rl_learning.py          # Thompson Sampling bandit implementation
 |   |-- bad_zones.py            # Dead zone detection + task feasibility
 |   |-- explainability.py       # Route comparison summaries
-|   |-- smart_preference.py     # Context-aware preference learning
-|   |-- opencellid.py           # Real tower data from OpenCelliD API
-|   |-- utils.py                # Haversine, feature extraction
-|   |-- generate_data.py        # Training data generation
-|   |-- train.py                # Model training pipeline
-|   |-- evaluate.py             # Model evaluation
+|   |-- smart_preference.py     # Context-aware preference learning (10 intents)
+|   |-- opencellid.py           # Real tower data from OpenCelliD API (601 towers)
+|   |-- generate_data.py        # Synthetic training data generation (100K samples)
+|   |-- train.py                # Training pipeline (cosine warmup, mixed precision)
+|   |-- evaluate.py             # Model evaluation + quality gates
+|   |-- eval_routes.py          # Route-level evaluation
+|   |-- utils.py                # Haversine, 22-dim feature extraction
+|   |-- schemas.py              # Pydantic models for model endpoints
 |   |-- data/                   # Training data + tower CSVs
 |   |-- weights/                # Saved model checkpoints (.pt)
 |
-|-- frontend/                   # Next.js 16 frontend
+|-- frontend/                   # Next.js 16 frontend (14 components, 5 hooks)
 |   |-- package.json
 |   |-- next.config.ts
 |   |-- tsconfig.json
 |   |-- src/
 |   |   |-- app/
-|   |   |   |-- page.tsx        # Main SPA page (state management)
-|   |   |   |-- layout.tsx      # Root layout (fonts, QueryProvider)
+|   |   |   |-- page.tsx        # Main SPA page (state management, route orchestration)
+|   |   |   |-- login/page.tsx  # Login page
+|   |   |   |-- register/page.tsx # Registration page
+|   |   |   |-- layout.tsx      # Root layout (fonts, QueryProvider, AuthProvider)
 |   |   |   |-- globals.css     # Tailwind + custom styles
 |   |   |-- components/
 |   |   |   |-- search/
-|   |   |   |   |-- SearchBar.tsx       # Location autocomplete (20 areas)
+|   |   |   |   |-- SearchBar.tsx       # Mapbox autocomplete search
 |   |   |   |-- map/
-|   |   |   |   |-- MapView.tsx         # Leaflet map, routes, zone markers
-|   |   |   |   |-- MapContainer.tsx    # Dynamic import wrapper
+|   |   |   |   |-- MapView.tsx         # Mapbox GL JS map (routes, towers, heatmap)
+|   |   |   |   |-- MapContainer.tsx    # Dynamic import wrapper (no SSR)
 |   |   |   |-- sidebar/
-|   |   |   |   |-- RouteSidebar.tsx    # Route list with signal badges
+|   |   |   |   |-- RouteSidebar.tsx    # Route list + detail view with signal bars
 |   |   |   |-- filters/
-|   |   |   |   |-- FilterPanel.tsx     # Preset filters + telecom grid
+|   |   |   |   |-- FilterPanel.tsx     # Signal/traffic heatmap + telecom filter
 |   |   |   |-- chat/
 |   |   |   |   |-- ChatBot.tsx         # 5-step conversational route finder
 |   |   |   |-- actions/
 |   |   |   |   |-- ActionButtons.tsx   # Locate, track, reroute buttons
 |   |   |   |-- common/
-|   |   |       |-- RouteBottomCard.tsx # Selected route detail card
-|   |   |       |-- Toast.tsx           # Alert notifications
+|   |   |   |   |-- RouteBottomCard.tsx # Route detail card (legacy)
+|   |   |   |   |-- Toast.tsx           # Alert notifications
+|   |   |   |   |-- HeatmapLegend.tsx   # Signal/traffic legend
+|   |   |   |   |-- WeatherBadge.tsx    # Weather condition display
+|   |   |   |-- auth/
+|   |   |   |   |-- AuthProvider.tsx    # JWT auth context + token management
+|   |   |   |-- providers/
+|   |   |   |   |-- QueryProvider.tsx   # TanStack Query wrapper
+|   |   |   |-- onboarding/
+|   |   |       |-- OnboardingTour.tsx  # 5-step guided tour
 |   |   |-- hooks/
 |   |   |   |-- useMapData.ts           # React Query hooks (routes, heatmap, towers)
 |   |   |   |-- useGeolocation.ts       # Browser GPS integration
 |   |   |   |-- useNetworkDetect.ts     # Carrier auto-detection
-|   |   |   |-- useTracking.ts          # Simulated live position tracking
+|   |   |   |-- useTracking.ts          # Real GPS position tracking (watchPosition)
+|   |   |   |-- useAuth.ts             # Auth state hook
 |   |   |-- services/
 |   |   |   |-- api.ts                  # Axios API client
 |   |   |-- types/
@@ -243,35 +304,58 @@ signalroute-ai/
 |   |-- DEPLOYMENT.md           # Deployment guide (Vercel, Railway, Atlas)
 ```
 
-## API Endpoints
+## API Endpoints (39 Total)
 
-### Frontend API (`/api/*`)
-
-| Method | Endpoint | Description |
-|--------|----------|-------------|
-| GET | `/api/routes` | Generate scored route options |
-| GET | `/api/heatmap` | Signal quality for all 20 zones |
-| GET | `/api/predict` | Predict future signal for a zone |
-| POST | `/api/reroute` | Smart reroute from current position |
-| GET | `/api/towers` | Cell tower infrastructure summary |
-| GET | `/api/offline-bundle` | Full route + heatmap bundle for offline use |
-
-### ML Model API (`/model/*`)
+### Frontend API (`/api/*`) -- 18 endpoints
 
 | Method | Endpoint | Description |
 |--------|----------|-------------|
+| GET | `/api/routes/fast` | Fast route geometry from TomTom (no ML scoring) |
+| GET | `/api/routes` | Full route scoring with ML, towers, weather, dead zones |
+| GET | `/api/heatmap` | Multi-layer heatmap data (signal/traffic) for Bangalore |
+| GET | `/api/weather` | Current weather conditions + signal impact factor |
+| GET | `/api/alerts` | Active congestion/crowd alerts near user position |
+| GET | `/api/traffic-flow` | Real-time TomTom traffic flow for a road point |
+| GET | `/api/incidents` | TomTom traffic incidents in a bounding box |
+| GET | `/api/dead-zones` | Predict dead zones per carrier along a route |
+| GET | `/api/predict` | Short-horizon signal prediction for a zone |
+| POST | `/api/reroute` | Reroute with signal bias when dead zone detected |
+| GET | `/api/geocode` | Forward geocoding via Nominatim |
+| GET | `/api/reverse-geocode` | Reverse geocoding via Nominatim |
+| GET | `/api/towers` | Tower data summary (count, operators, source) |
+| GET | `/api/towers/geo` | Individual tower lat/lng for map rendering |
+| GET | `/api/offline-bundle` | Pre-computed offline navigation bundle |
+| GET | `/api/detect-network` | ISP/carrier detection from client IP |
+| GET | `/api/network-strength` | Signal strength estimate for current user |
+| GET | `/api/services/health` | Health check for all internal services |
+
+### ML Model API (`/model/*`) -- 12 endpoints
+
+| Method | Endpoint | Description |
+|--------|----------|-------------|
+| PUT | `/model/score-routes` | Score candidate routes with ML model |
+| PUT | `/model/predict-signal` | Predict signal strength at a point |
+| PUT | `/model/analyze-route` | Analyze route connectivity with bad zones |
+| PUT | `/model/detect-zones` | Detect edge-case zones along a route |
+| PUT | `/model/health` | Model status and training metadata |
+| PUT | `/model/smart-route` | Smart routing with user intent resolution |
+| PUT | `/model/record-choice` | Record route choice for preference learning |
+| PUT | `/model/resolve-intent` | Resolve text intent to preference value |
 | PUT | `/model/auto-route` | RL-powered automatic route selection |
-| PUT | `/model/record-trip` | Record trip outcome for RL training |
-| PUT | `/model/user-patterns` | Get learned user preferences |
-| GET | `/model/refresh-towers` | Refresh tower data from OpenCelliD |
+| PUT | `/model/record-trip` | Update RL distributions after trip |
+| PUT | `/model/user-patterns` | View learned RL patterns for a user |
+| PUT | `/model/refresh-towers` | Fetch fresh tower data from OpenCelliD API |
 
-### Clean Architecture API (`/api/v1/*`)
+### Auth API (`/api/v1/*`) -- 6 endpoints
 
 | Method | Endpoint | Description |
 |--------|----------|-------------|
-| POST | `/api/v1/route` | Coordinate-based route ranking |
-| POST | `/api/v1/rl/update` | Update RL profile (success/failure) |
+| POST | `/api/v1/login` | JWT login (in-memory demo or MongoDB) |
+| POST | `/api/v1/register` | User registration |
+| GET | `/api/v1/me` | Get current user profile from JWT |
 | GET | `/api/v1/health` | Service health check |
+| POST | `/api/v1/route` | MongoDB-backed ranked route generation |
+| POST | `/api/v1/rl/update` | Record route outcome for RL profile update |
 
 Full API documentation: [docs/API.md](docs/API.md)
 
@@ -309,9 +393,9 @@ effective_weight = 0.6 * user_weight + 0.4 * rl_sample
 
 The ML model (ResidualSignalNet) predicts signal quality at each point:
 
-**Input features (17 dims):** latitude, longitude, tower distance, tower signal dBm, terrain type (7 one-hot), hour (sin/cos), density, building height, operator
+**Input features (22 dims):** latitude, longitude, tower distance, tower signal dBm, terrain type (7 one-hot), hour (sin/cos), density, building height, operator, tower range, frequency, tx power, tower height, path loss, weather factor
 
-**Output:** signal_strength (0-100), drop_probability (0-1)
+**Output (3 heads):** signal_strength (0-100), drop_probability (0-1), handoff_risk (0-1)
 
 ## Signal Zones
 
@@ -350,7 +434,7 @@ The ML model (ResidualSignalNet) predicts signal quality at each point:
 | User changes carrier | Re-fetch with new telecom filter |
 | Fast route has dead zone | Highlighted in route card, user decides |
 | No alternate route | Return single route with signal advisory |
-| GPS drift | watchPosition for continuous location updates |
+| GPS drift | watchPosition with enableHighAccuracy for continuous updates |
 | ML service down | Fallback neutral predictions (signal=50, drop=0.1) |
 | OSRM unavailable | Mock route generator with 3 synthetic routes |
 
@@ -382,8 +466,8 @@ cd model
 
 ```bash
 cd frontend
-npm install
-npm run dev
+pnpm install
+pnpm dev
 ```
 
 ### 4. Docker (All Services)

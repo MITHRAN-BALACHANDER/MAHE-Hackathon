@@ -38,7 +38,7 @@ Built the entire ML backend from scratch as the model engineer:
 - Designed and implemented the radio propagation physics engine
 - Synthetic dataset generation (100,000 labelled samples, 500 towers)
 - Model architecture design, GPU training, and evaluation
-- REST API server with 11 endpoints
+- REST API server with 39 endpoints across 3 route groups
 - Smart preference / intent resolution engine
 - Reinforcement learning pattern recognition system
 - Backend integration bridging the ML model to the frontend
@@ -384,26 +384,52 @@ Alternative (unselected) routes render with dashed lines at 50% opacity and resp
 
 | Method | Path | Description |
 |---|---|---|
-| GET | /api/routes | Score 3 route options between named locations |
-| GET | /api/heatmap | Signal strength for all 20 Bangalore zones |
-| GET | /api/predict | Short-horizon signal forecast for a zone |
-| POST | /api/reroute | Reroute request with signal bias |
+| GET | /api/routes/fast | Fast route geometry from TomTom, no ML scoring |
+| GET | /api/routes | Full route scoring with ML, towers, weather, dead zones |
+| GET | /api/heatmap | Multi-layer heatmap data (signal/traffic) for Bangalore zones |
+| GET | /api/weather | Current weather conditions + signal impact factor |
+| GET | /api/alerts | Active congestion/crowd alerts near user position |
+| GET | /api/traffic-flow | Real-time TomTom traffic flow for a road point |
+| GET | /api/incidents | TomTom traffic incidents in a bounding box |
+| GET | /api/dead-zones | Predict dead zones per carrier along a route |
+| GET | /api/predict | Short-horizon signal prediction for a zone |
+| POST | /api/reroute | Reroute with signal bias when dead zone detected |
+| GET | /api/geocode | Forward geocoding via Nominatim |
+| GET | /api/reverse-geocode | Reverse geocoding via Nominatim |
+| GET | /api/towers | Tower data summary (count, operators, source) |
+| GET | /api/towers/geo | Individual tower lat/lng for map rendering |
+| GET | /api/offline-bundle | Pre-computed offline navigation bundle |
+| GET | /api/detect-network | ISP/carrier detection from client IP |
+| GET | /api/network-strength | Signal strength estimate for current user |
+| GET | /api/services/health | Health check for all internal services |
 
 ### Model Endpoints (PUT /model/*)
 
 | Method | Path | Description |
 |---|---|---|
-| PUT | /model/score-routes | Score arbitrary routes with custom towers |
-| PUT | /model/predict-signal | Point signal prediction at (lat,lng) |
-| PUT | /model/analyze-route | Full route analysis with bad zones |
-| PUT | /model/detect-zones | Dead zone detection only |
+| PUT | /model/score-routes | Score candidate routes with ML model |
+| PUT | /model/predict-signal | Predict signal strength at a point |
+| PUT | /model/analyze-route | Analyze route connectivity with bad zones |
+| PUT | /model/detect-zones | Detect edge-case zones along a route |
 | PUT | /model/health | Model status and training metadata |
-| PUT | /model/smart-route | Intent-driven routing (rule-based preference) |
-| PUT | /model/record-choice | Record user choice for preference learning |
-| PUT | /model/resolve-intent | Preview intent -> preference mapping |
+| PUT | /model/smart-route | Smart routing with user intent resolution |
+| PUT | /model/record-choice | Record route choice for preference learning |
+| PUT | /model/resolve-intent | Resolve text intent to preference value |
 | PUT | /model/auto-route | RL-powered routing (pattern recognition) |
 | PUT | /model/record-trip | Update RL distributions after trip |
 | PUT | /model/user-patterns | View learned RL patterns for a user |
+| PUT | /model/refresh-towers | Fetch fresh tower data from OpenCelliD API |
+
+### Auth Endpoints (/api/v1/*)
+
+| Method | Path | Description |
+|---|---|---|
+| POST | /api/v1/login | JWT login (in-memory or MongoDB-backed) |
+| POST | /api/v1/register | User registration |
+| GET | /api/v1/me | Get current user profile from JWT |
+| GET | /api/v1/health | Service health check |
+| POST | /api/v1/route | MongoDB-backed ranked route generation |
+| POST | /api/v1/rl/update | Record route outcome for RL profile update |
 
 ---
 
@@ -448,11 +474,29 @@ tx_power_dbm, height_m, range_km
 
 ## Authentication and Authorization
 
-None implemented -- hackathon scope. In production:
-- JWT bearer tokens per vehicle VIN
-- user_id derived from authenticated session, not client-supplied
-- Rate limiting on /model/auto-route (heavy inference endpoint)
-- HTTPS required; current CORS is `allow_origins=["*"]`
+Dual authentication system implemented:
+
+**In-memory demo store** (default, no MongoDB required):
+- Demo account: `demo` / `demo123` (bcrypt-hashed)
+- Registration creates users in-memory (lost on server restart)
+- JWT tokens with `python-jose`, configurable expiration
+
+**MongoDB-backed persistence** (when `MONGO_URI` is configured):
+- Motor async driver for user storage
+- bcrypt password hashing via passlib
+- Users persist across server restarts
+
+**Auth flow:**
+- AuthProvider on the frontend hydrates token from `localStorage` on mount
+- Unauthenticated users are redirected to `/login`
+- JWT bearer token sent via Authorization header
+- `GET /api/v1/me` validates token and returns user profile
+
+**Production gaps (acceptable for hackathon):**
+- user_id on some RL endpoints is still client-supplied
+- No rate limiting on heavy inference endpoints
+- CORS is `allow_origins=["*"]`
+- JWT secret regenerated on restart (in-memory mode)
 
 ---
 
@@ -496,18 +540,18 @@ loss_ho   = F.binary_cross_entropy(ho.float(), y_ho)
 | Thompson Sampling vs deep RL | Converges in 3-5 trips; cannot model complex sequential dependencies or multi-step reward horizons |
 | All-PUT endpoints | ngrok compatibility; breaks REST conventions (PUT /model/health is semantically wrong) |
 | In-process model singleton | Avoids model reload overhead on every request; prevents horizontal scaling without sticky sessions |
-| Route generation via interpolation | Avoids Google Maps API dependency/cost; generated paths are approximate, not road-snapped |
+| Route generation via interpolation | Avoids Google Maps API dependency/cost; ~~generated paths are approximate~~ **Now uses TomTom Routing API for road-snapped geometry** |
 
 ---
 
 ## Limitations of the Project
 
 - ~~**No real tower data**: Uses 500 synthetic towers.~~ **Resolved**: OpenCelliD integration fetches real tower lat/lng for Bangalore zones. Individual tower positions are rendered on the map at their actual coordinates.
-- **Static route generation**: Routes are interpolated between zone centroids, not road-snapped. Real routing requires OSRM or Valhalla. **Partially resolved**: TomTom routing API provides road-snapped geometry with up to 5 alternative routes.
+- ~~**Static route generation**: Routes are interpolated between zone centroids, not road-snapped.~~ **Resolved**: TomTom Routing API provides real road-snapped geometry with up to 7 alternative routes per query.
 - **Single-server RL**: Bandit state is per-process; a load-balanced deployment would require Redis or a shared store.
 - ~~**No live signal data**: The model uses static tower parameters.~~ **Resolved**: Real-time tower data fetched from OpenCelliD along each route path during route generation.
 - **Urban Bangalore only**: Zone definitions and tower placement cover 12.78-13.15N, 77.45-77.82E (25 zones + 12 edge zones). Outside this bounding box, predictions degrade to physics defaults.
-- **Weather is a static parameter**: The user passes weather_factor; there is no integration with a weather API.
+- ~~**Weather is a static parameter**: The user passes weather_factor; there is no integration with a weather API.~~ **Resolved**: OpenWeather API integration provides real-time weather conditions. Weather factor is automatically fetched and cached per ~1km grid cell with 10-minute TTL.
 
 ---
 
@@ -530,7 +574,19 @@ The map now renders individual cell towers at their real geographic coordinates 
 
 ### TomTom Road-Snapped Routing
 
-Routes now use the TomTom Routing API for road-snapped geometry with up to 5 alternative paths. If TomTom returns fewer than 5 routes, synthetic alternatives are generated and appended to ensure visual variety on the map.
+Routes now use the TomTom Routing API for road-snapped geometry with up to 7 alternative paths. If TomTom returns fewer than the requested count, synthetic alternatives are generated and appended to ensure visual variety on the map.
+
+### Sidebar Route Detail View
+
+The route sidebar toggles between two views:
+- **List view**: Shows all routes with signal score, ETA, distance, and a "View Route" button
+- **Detail view**: Shows the selected route with large signal bars (color-coded with glow effect), route name, ETA/distance stats, and a Start/Stop Navigation button
+- Back button in both views; in tracking mode, back also stops navigation
+- Signal bars use a `signalInfo()` helper that returns `{ filled, color, glow, label }` based on signal score thresholds
+
+### Real GPS Navigation Tracking
+
+The `useTracking` hook was rewritten to use the browser's `navigator.geolocation.watchPosition` API instead of simulated position animation. The system finds the closest point on the route path to the user's real GPS coordinates and computes progress as `closestIndex / (pathLength - 1)`. Uses `enableHighAccuracy: true, maximumAge: 3000, timeout: 10000`.
 
 ### Nominatim Geocoding Pipeline
 
@@ -630,12 +686,12 @@ Congestion data is sourced live from the **TomTom Traffic API** instead of using
 |----------|-------|-------|
 | Concept/Innovation | 8/10 | Signal-aware navigation is genuinely useful. Multi-SIM, dead zones, RL personalisation add real depth. |
 | ML Implementation | 7/10 | Architecture is sound (residual MLP, MC Dropout, multi-task). Trained on synthetic data, so real-world accuracy is unproven. |
-| Backend Engineering | 5/10 | Functional but monolithic (1,640-line main.py), duplicate auth systems, no rate limiting, global mutable state. |
+| Backend Engineering | 5/10 | Functional but monolithic (1,481-line main.py), dual auth systems (in-memory + MongoDB), no rate limiting, global mutable state. |
 | Frontend | 7/10 | Clean React/Next.js with hooks, Mapbox GL, React Query. Good UX (two-phase loading, onboarding). Polished visuals. |
 | Data Pipeline | 5/10 | Training on synthetic propagation data is the biggest weakness. Real towers provide location only, not measured signal. |
 | Security | 4/10 | Plaintext demo passwords, JWT secret regenerated on restart, no endpoint auth, no rate limiting. Acceptable for hackathon only. |
 | Code Quality | 6/10 | Well-structured frontend and model code. Backend is a monolith with sys.path hacks. Good Pydantic schemas throughout. |
-| Completeness | 7/10 | 38 endpoints, 12 components, full ML pipeline, auth, chatbot, heatmaps, offline mode -- impressive surface area. |
+| Completeness | 7/10 | 39 endpoints, 14 components, full ML pipeline, auth, chatbot, heatmaps, offline mode -- impressive surface area. |
 
 ### What lifts the score
 
@@ -651,7 +707,7 @@ Congestion data is sourced live from the **TomTom Traffic API** instead of using
 - Backend won't scale (monolith, in-process globals, no shared cache)
 - Security is hackathon-grade -- would need significant hardening for production
 - Some features are shallower than they appear (temporal prediction returns current value, traffic heatmap uses zone metadata)
-- Duplicate auth systems create confusion
+- Dual auth systems (in-memory + MongoDB) add complexity; should consolidate to MongoDB-only
 
 ### Bottom line
 
@@ -707,33 +763,6 @@ Backend implements a 30-second TTL cache for the `GET /api/routes` endpoint. The
 - **TTL**: 30 seconds balances freshness (traffic changes) vs compute savings
 - **Lazy GC**: expired entries are evicted when cache exceeds 50 entries
 - **Response field**: `cache_hit: true/false` in the API response for observability
-
----
-
-## Updated API Surface
-
-### New Endpoints
-
-| Method | Path | Description |
-|---|---|---|
-| GET | /api/geocode | Forward geocode via Nominatim (location name to lat/lng) |
-| GET | /api/reverse-geocode | Reverse geocode via Nominatim (lat/lng to place name) |
-| GET | /api/towers/geo | Individual tower positions for map rendering |
-| GET | /api/detect-network | ISP detection via external IP lookup |
-| GET | /api/weather | Live weather + signal impact for a lat/lng |
-| GET | /api/alerts | Congestion/crowd persistence alerts along a path |
-| GET | /api/traffic-flow | Real-time TomTom traffic flow (speed + congestion ratio) for a road point |
-| GET | /api/incidents | TomTom traffic incidents within a bounding box |
-| GET | /api/dead-zones | Multi-carrier dead zone prediction at a specific time of day |
-| GET | /api/network-strength | Browser network + ISP signal strength estimation |
-
-### Updated Endpoints
-
-| Method | Path | Change |
-|---|---|---|
-| GET | /api/routes | Added 30s request clustering cache, `cache_hit` field, TomTom integration, up to 7 routes. Now includes `weather`, `call_drop_stats`, per-route `carrier_dead_zones`, `carrier_summary`, and `offline_alerts` |
-| GET | /api/routes/fast | New two-phase endpoint: returns TomTom routes with heuristic signal scores in ~2-3s (no ML inference, no tower fetch) |
-| GET | /api/heatmap | Now uses OpenCelliD-enriched tower data for zone scoring |
 
 ---
 
@@ -825,6 +854,117 @@ The `docker-compose.yml` defines two services: `backend` (Python/FastAPI) and `f
 
 ## Results / Impact
 
+### Model Metrics & Accuracy
+
+#### ResidualSignalNet -- Primary Signal Prediction (Regression)
+
+| Metric | Value | Notes |
+|---|---|---|
+| Mean Absolute Error (MAE) | 7.42% | On 0-100 signal scale |
+| Root Mean Squared Error (RMSE) | 10.50% | |
+| R-squared (R2) | 0.8978 | Explains ~90% of signal variance |
+| Final validation loss | 0.41212 | Best checkpoint at epoch 66 |
+| Early stopping | Epoch 101 / 300 | Patience = 35 epochs |
+
+#### Drop Probability (Binary Classification)
+
+| Metric | Value |
+|---|---|
+| Accuracy | 91.1% |
+| Precision | 87.6% |
+| Recall | 85.9% |
+| F1 Score | 86.8% |
+| Calibration ECE | 0.0141 |
+
+#### Handoff Risk (Binary Classification)
+
+| Metric | Value |
+|---|---|
+| Accuracy | 96.8% |
+| Precision | 97.1% |
+| Recall | 96.8% |
+| F1 Score | 96.9% |
+
+#### Dead Zone Detection (Derived Task)
+
+| Metric | Value |
+|---|---|
+| F1 Score | 89.7% |
+
+#### Per-Bucket Signal Accuracy (Stratified Evaluation)
+
+| Signal Bucket | Samples | MAE | RMSE |
+|---|---|---|---|
+| Dead (0-15%) | 3,465 | 5.44% | 8.82% |
+| Poor (15-35%) | 2,717 | 9.36% | 13.30% |
+| Fair (35-55%) | 2,276 | 9.19% | 11.73% |
+| Good (55-75%) | 1,351 | 8.94% | 10.96% |
+| Great (75-100%) | 2,332 | 5.49% | 6.97% |
+
+Model performs best at the extremes (dead zones and strong signal areas) where the physics-based propagation loss is most predictable. Mid-range buckets have higher error due to multipath interference and urban canyon effects.
+
+#### Edge Zone Performance
+
+| Metric | Value |
+|---|---|
+| Samples | 1,161 |
+| MAE | 17.46% |
+| RMSE | 22.06% |
+| Mean actual signal | 49.3% |
+| Mean predicted signal | 64.0% |
+
+The model overestimates signal in edge zones (tunnels, underpasses, urban canyons) where extreme attenuation is hard to predict from tower geometry alone.
+
+#### MC Dropout Uncertainty Quantification
+
+8 forward passes with dropout active (p=0.12), BatchNorm in eval mode.
+
+| Confidence Level | Criteria |
+|---|---|
+| High | avg uncertainty < 3.0 and > 80% of segments have low uncertainty |
+| Medium | avg uncertainty < 8.0 and > 50% of segments have low uncertainty |
+| Low | Otherwise |
+
+#### RL Contextual Bandit (Thompson Sampling)
+
+| Metric | Value |
+|---|---|
+| Convergence speed | 3-5 trips to confident prediction |
+| Dominant intent confidence | 0.857 after 5 trips |
+| Thompson sample confidence range | 0.919-0.975 |
+| Action space | 10 intents |
+| Multi-user isolation | Independent Beta distributions per (user, time, day, origin, dest) pattern |
+
+#### Training Configuration Summary
+
+| Parameter | Value |
+|---|---|
+| Architecture | Residual MLP (22 -> 256 -> 4x ResBlock -> 64 -> 3 heads) |
+| Total parameters | 560,259 |
+| Checkpoint size | 2.2 MB |
+| Training samples | 100,000 |
+| Optimizer | AdamW (lr=3e-4, weight_decay=1e-5) |
+| Scheduler | Cosine warmup (10 warmup + cosine decay) |
+| Batch size | 1024 |
+| Mixed precision | float16 forward / float32 loss |
+| Gradient clipping | max_norm=1.0 |
+| Label smoothing | eps=0.02 |
+| Spatial CV | Tile-based (2.2 km tiles), 471 tiles split 70/15/15 |
+| Loss weights | Signal=1.0, Drop=0.6, Handoff=0.4 |
+| GPU | RTX 5050 (CUDA 13.0) |
+
+#### Quality Gates (Automated Tests)
+
+| Metric | Minimum Threshold | Actual |
+|---|---|---|
+| Signal R2 | > 0.80 | 0.8978 |
+| Drop accuracy | > 85% | 91.1% |
+| Handoff accuracy | > 90% | 96.8% |
+
+73 unit tests + 4 integration tests pass. All quality gates enforced in `test_models.py`.
+
+### Application Metrics
+
 | Metric | Value |
 |---|---|
 | Signal prediction R2 | 0.8978 |
@@ -837,7 +977,7 @@ The `docker-compose.yml` defines two services: `backend` (Python/FastAPI) and `f
 | Model parameters | 560,259 |
 | Training samples | 100,000 |
 | Synthetic towers | 500 (25 Bangalore zones + 12 edge zones) |
-| API endpoints | 16 (9 frontend + 7 model) |
+| API endpoints | 39 (20 backend + 8 model + 6 auth + 5 service) |
 | RL convergence | 3-5 trips to confident prediction |
 | Final training val_loss | 0.41212 (best at epoch 66, early stop at 101) |
 

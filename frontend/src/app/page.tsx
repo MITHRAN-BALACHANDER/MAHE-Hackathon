@@ -5,7 +5,6 @@ import { useRouter } from "next/navigation";
 
 import { ActionButtons } from "@/src/components/actions/ActionButtons";
 import { HeatmapLegend } from "@/src/components/common/HeatmapLegend";
-import { RouteBottomCard } from "@/src/components/common/RouteBottomCard";
 import { Toast } from "@/src/components/common/Toast";
 import { OnboardingTour } from "@/src/components/common/OnboardingTour";
 import { FilterPanel } from "@/src/components/filters/FilterPanel";
@@ -104,17 +103,23 @@ export default function Home() {
   // Use full routes if available, otherwise show fast routes (heuristic scoring)
   const hasFull = !!routeData?.routes?.length;
 
-  // Early dead zone fetch -- triggered as soon as fast routes arrive, in parallel
-  // with full ML scoring. Gives dead zone warnings ~5-10s faster than waiting for
-  // the full route response which takes 30-60s.
-  const earlyDzEnabled = hasSearched && !!snapshotSrc && !!snapshotDst && !!fastRouteData?.routes?.length && !hasFull;
+  // Early dead zone fetch -- starts as soon as the search is triggered (in
+  // parallel with both fast-route and full-ML requests). Dead zone predictions
+  // only need source + destination, not route data. Disabled once full routes
+  // arrive (they embed dead zones directly).
+  const earlyDzEnabled = hasSearched && !!snapshotSrc && !!snapshotDst && !hasFull;
   const { data: earlyDeadZoneData } = useEarlyDeadZones(snapshotSrc, snapshotDst, earlyDzEnabled);
   const displayRoutes: RouteOption[] = useMemo(() => {
     if (!hasSearched) return [];
     if (hasFull) return routeData.routes;
-    // Convert fast routes to RouteOption shape with heuristic scores
+    // Convert fast routes to RouteOption shape with heuristic scores.
+    // When early dead zone data is available, inject it into the matching
+    // route so the map renders dead zone overlays immediately instead of
+    // waiting for the full ML response (saves 15-45 seconds).
     if (fastRouteData?.routes?.length) {
-      return fastRouteData.routes.map((r) => ({
+      const earlyDz = earlyDeadZoneData?.dead_zones;
+      const earlyRouteName = earlyDeadZoneData?.route_name;
+      return fastRouteData.routes.map((r, i) => ({
         name: r.name,
         eta: r.eta,
         distance: r.distance,
@@ -122,10 +127,15 @@ export default function Home() {
         signal_score: r.signal_score,
         weighted_score: r.weighted_score,
         zones: r.zones ?? [],
+        // Inject early dead zones into the route that was analyzed
+        // (backend analyzes the first/best route; match by name or index 0)
+        ...(earlyDz?.length && (i === 0 || r.name === earlyRouteName)
+          ? { carrier_dead_zones: earlyDz }
+          : {}),
       }));
     }
     return [];
-  }, [hasSearched, hasFull, routeData, fastRouteData]);
+  }, [hasSearched, hasFull, routeData, fastRouteData, earlyDeadZoneData]);
 
   const routes = displayRoutes;
   const recommendedRoute = (hasFull ? routeData?.recommended_route : fastRouteData?.recommended_route) ?? "";
@@ -399,7 +409,7 @@ export default function Home() {
 
   const handleStartNavigation = useCallback(() => {
     setTrackingActive(true);
-    setSidebarOpen(false);
+    // Keep sidebar open -- navigation view is now inside the sidebar
   }, []);
 
   const handleLocateMe = useCallback(() => {
@@ -569,16 +579,6 @@ export default function Home() {
         onStartNavigation={handleStartNavigation}
         onStopNavigation={() => setTrackingActive(false)}
       />
-
-      {/* Bottom route card */}
-      {selectedRoute && !sidebarOpen && (
-        <RouteBottomCard
-          route={selectedRoute}
-          eta={etaDisplay}
-          onStartNavigation={handleStartNavigation}
-          suggested={!!suggestedRoute && selectedRoute.name === recommendedRoute}
-        />
-      )}
 
       {/* Heatmap color legend (bottom-right) -- only when a layer is active */}
       {heatmapFilter !== "none" && (

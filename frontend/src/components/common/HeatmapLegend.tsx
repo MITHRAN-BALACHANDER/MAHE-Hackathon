@@ -12,17 +12,9 @@ const LEGENDS: Record<ActiveFilter, { title: string; items: { color: string; lab
   signal: {
     title: "Signal Strength",
     items: [
-      { color: "#22c55e", label: "Strong (70+)" },
-      { color: "#eab308", label: "Medium (40-69)" },
-      { color: "#ef4444", label: "Weak (<40)" },
-    ],
-  },
-  weather: {
-    title: "Weather Impact",
-    items: [
-      { color: "#22c55e", label: "Clear (minimal impact)" },
-      { color: "#eab308", label: "Moderate (some degradation)" },
-      { color: "#ef4444", label: "Severe (heavy disruption)" },
+      { color: "#22c55e", label: "Strong " },
+      { color: "#eab308", label: "Medium " },
+      { color: "#ef4444", label: "Weak " },
     ],
   },
   traffic: {
@@ -31,15 +23,6 @@ const LEGENDS: Record<ActiveFilter, { title: string; items: { color: string; lab
       { color: "#22c55e", label: "Light (free flow)" },
       { color: "#eab308", label: "Moderate (some delays)" },
       { color: "#ef4444", label: "Heavy (congested)" },
-    ],
-  },
-  road: {
-    title: "Road Type",
-    items: [
-      { color: "#3b82f6", label: "Highway" },
-      { color: "#f59e0b", label: "Urban Main" },
-      { color: "#22c55e", label: "Suburban" },
-      { color: "#a855f7", label: "Residential" },
     ],
   },
 };

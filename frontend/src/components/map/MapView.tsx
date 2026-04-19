@@ -46,7 +46,7 @@ export type HeatmapFilterType = "signal" | "weather" | "traffic" | "road" | "non
 type Props = {
   routes: RouteOption[];
   selectedRouteIndex: number;
-  heatmapZones: { name: string; lat: number; lng: number; score: number; label: string; color: string }[];
+  heatmapZones: { name: string; lat: number; lng: number; score: number; label: string; color: string; radius_km?: number }[];
   towerMarkers?: TowerMarker[];
   onRouteClick?: (index: number) => void;
   trackingPosition?: Coordinate | null;
@@ -777,11 +777,16 @@ export default function MapView({
 
     // ---- Signal / Weather / Traffic layers: colored circles ----
     heatmapZones.forEach((zone, idx) => {
-      // Radius based on score -- higher score = larger circle for signal/weather,
-      // inverted for traffic (high congestion = larger warning area)
-      const baseRadius = layerType === "traffic"
-        ? 0.008 + (zone.score / 100) * 0.012
-        : 0.008 + ((100 - zone.score) / 100) * 0.008;
+      // Use actual radius_km from backend if available; fall back to score-based sizing
+      const KM_TO_DEG = 1 / 111.32;  // approximate km -> degrees
+      let baseRadius: number;
+      if (zone.radius_km) {
+        baseRadius = zone.radius_km * KM_TO_DEG;
+      } else if (layerType === "traffic") {
+        baseRadius = 0.008 + (zone.score / 100) * 0.012;
+      } else {
+        baseRadius = 0.008 + ((100 - zone.score) / 100) * 0.008;
+      }
 
       // Build circle polygon (48 segments for smoothness)
       const steps = 48;
