@@ -1,4 +1,4 @@
-"""Comprehensive test suite for SignalRoute clean-architecture backend.
+"""Comprehensive test suite for Cellular Maze clean-architecture backend.
 
 Tests route_service, signal_client, rl_service, scoring, and API endpoints.
 All external services (ML, OSRM, MongoDB) are mocked -- no external deps needed.
@@ -415,7 +415,7 @@ class TestAPI:
         async with AsyncClient(transport=transport, base_url="http://test") as client:
             resp = await client.get("/")
         assert resp.status_code == 200
-        assert "SignalRoute" in resp.json()["service"]
+        assert "Cellular Maze" in resp.json()["service"]
 
     @pytest.mark.asyncio
     async def test_route_valid_request(self, app, route_service):

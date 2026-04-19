@@ -34,7 +34,7 @@ import httpx
 from model.config import ZONES
 from model.utils import haversine
 
-logger = logging.getLogger("signalroute")
+logger = logging.getLogger("cellularmaze")
 
 # -----------------------------------------------------------------------
 # Config from environment

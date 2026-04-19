@@ -148,7 +148,7 @@ async def detect_network(request: Request):
 
     try:
         async with httpx.AsyncClient(timeout=5.0) as http:
-            resp = await http.get(lookup_url, headers={"User-Agent": "SignalRoute/1.0"})
+            resp = await http.get(lookup_url, headers={"User-Agent": "CellularMaze/1.0"})
             resp.raise_for_status()
             data = resp.json()
 
@@ -207,7 +207,7 @@ async def network_strength(request: Request):
     isp_info = {"isp": "unknown", "carrier": ""}
     try:
         async with httpx.AsyncClient(timeout=5.0) as http:
-            resp = await http.get(lookup_url, headers={"User-Agent": "SignalRoute/1.0"})
+            resp = await http.get(lookup_url, headers={"User-Agent": "CellularMaze/1.0"})
             if resp.status_code == 200:
                 data = resp.json()
                 isp = data.get("org", "")
@@ -221,6 +221,6 @@ async def network_strength(request: Request):
         "isp": isp_info["isp"],
         "carrier": isp_info["carrier"],
         "estimated_strength": "good",  # Will be replaced by model prediction
-        "tip": "For accurate signal strength, enable location services and let SignalRoute predict signal along your route.",
+        "tip": "For accurate signal strength, enable location services and let Cellular Maze predict signal along your route.",
         "note": "Browser-level signal measurement requires the Network Information API (Chrome only). True dBm readings require native app access.",
     }

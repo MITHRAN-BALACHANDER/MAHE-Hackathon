@@ -1,7 +1,6 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { useRouter } from "next/navigation";
 
 import { ActionButtons } from "@/src/components/actions/ActionButtons";
 import { HeatmapLegend } from "@/src/components/common/HeatmapLegend";
@@ -15,20 +14,10 @@ import { useGeolocation } from "@/src/hooks/useGeolocation";
 import { useFastRoutes, useEarlyDeadZones, useHeatmap, useReroute, useRoutes, useTowerMarkers } from "@/src/hooks/useMapData";
 import { useNetworkDetect } from "@/src/hooks/useNetworkDetect";
 import { useTracking } from "@/src/hooks/useTracking";
-import { useAuth } from "@/src/hooks/useAuth";
 import { offlineService, mapboxSearchService, routeService, alertsService } from "@/src/services/api";
 import type { TelecomMode, WeatherInfo, CallDropStats, RouteOption } from "@/src/types/route";
 
 export default function Home() {
-  const router = useRouter();
-  const { isAuthenticated, hydrated } = useAuth();
-
-  // Redirect once AuthProvider has read localStorage and user is not authenticated
-  useEffect(() => {
-    if (hydrated && !isAuthenticated) {
-      router.replace("/login");
-    }
-  }, [hydrated, isAuthenticated, router]);
   // Search state -- empty on load
   const [source, setSource] = useState("");
   const [destination, setDestination] = useState("");
@@ -483,11 +472,6 @@ export default function Home() {
     },
     [],
   );
-
-  // While auth is hydrating or user is not authenticated, show nothing
-  if (!hydrated || !isAuthenticated) {
-    return null;
-  }
 
   return (
     <div className="relative h-screen w-screen overflow-hidden bg-white">

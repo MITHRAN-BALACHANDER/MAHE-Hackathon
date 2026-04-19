@@ -5,7 +5,7 @@ from typing import Any
 
 def setup_logging(level: int = logging.INFO) -> logging.Logger:
     """Configure structured logging for the application."""
-    logger = logging.getLogger("signalroute")
+    logger = logging.getLogger("cellularmaze")
     if logger.handlers:
         return logger
 

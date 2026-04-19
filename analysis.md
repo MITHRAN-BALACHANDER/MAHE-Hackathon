@@ -1,10 +1,10 @@
-# SignalRoute: Cellular Network-Aware Routing for Connected Vehicles
+# Cellular Maze: Cellular Network-Aware Routing for Connected Vehicles
 
 ---
 
 ## Project Name
 
-**SignalRoute** -- Cellular Network-Aware Routing
+**Cellular Maze** -- Cellular Network-Aware Routing
 
 ---
 

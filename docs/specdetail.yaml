@@ -1,10 +1,10 @@
 openapi: "3.1.0"
 info:
-  title: SignalRoute API
+  title: Cellular Maze API
   description: |
     Cellular network-aware routing API with reinforcement learning.
     
-    SignalRoute scores candidate routes based on predicted cellular signal quality,
+    Cellular Maze scores candidate routes based on predicted cellular signal quality,
     allowing users to balance speed against connectivity. The system uses a
     physics-based ML model (COST-231 Hata + residual correction, R²=0.92) and
     Thompson Sampling RL for per-user personalization.
@@ -17,8 +17,8 @@ info:
     - **Data Sources**: OpenCelliD (towers), TomTom (routing), Nominatim (geocoding)
   version: "2.0.0"
   contact:
-    name: SignalRoute Team
-    url: https://github.com/signalroute
+    name: Cellular Maze Team
+    url: https://github.com/cellularmaze
 
 servers:
   - url: http://localhost:8000

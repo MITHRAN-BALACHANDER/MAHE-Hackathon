@@ -9,7 +9,7 @@ services:
       - "8000:8000"
     environment:
       - MONGO_URI=mongodb://mongo:27017
-      - DB_NAME=signalroute
+      - DB_NAME=cellularmaze
       - MODEL_URL=http://ml-service:8001
       - OSRM_URL=http://router.project-osrm.org
     depends_on:

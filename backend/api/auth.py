@@ -1,4 +1,4 @@
-"""Authentication endpoints for SignalRoute.
+"""Authentication endpoints for Cellular Maze.
 
 Provides JWT-based auth with mock user storage for hackathon demo.
 In production, this would integrate with MongoDB via Motor.
@@ -15,7 +15,7 @@ from pydantic import BaseModel, EmailStr
 router = APIRouter(prefix="/api/v1", tags=["Authentication"])
 
 # JWT Configuration
-SECRET_KEY = "signalroute-hackathon-secret-key-2026"
+SECRET_KEY = "cellularmaze-hackathon-secret-key-2026"
 ALGORITHM = "HS256"
 ACCESS_TOKEN_EXPIRE_MINUTES = 1440  # 24 hours
 
@@ -51,7 +51,7 @@ _users: dict[str, dict] = {
         "user_id": "usr_demo",
         "username": "demo",
         "password": "demo123",
-        "email": "demo@signalroute.ai",
+        "email": "demo@cellularmaze.ai",
         "created_at": "2026-01-01T00:00:00Z",
     }
 }

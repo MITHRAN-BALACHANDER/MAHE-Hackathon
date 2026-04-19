@@ -15,7 +15,7 @@ const sora = Sora({
 });
 
 export const metadata: Metadata = {
-  title: "SignalRoute - Network-Aware Navigation",
+  title: "Cellular Maze - Network-Aware Navigation",
   description:
     "Smart route recommendation balancing ETA and cellular connectivity.",
 };

@@ -11,7 +11,7 @@ import argparse
 
 
 def main():
-    parser = argparse.ArgumentParser(description="SignalRoute Model Pipeline")
+    parser = argparse.ArgumentParser(description="Cellular Maze Model Pipeline")
     parser.add_argument("--generate", action="store_true", help="Generate synthetic data")
     parser.add_argument("--train", action="store_true", help="Train the model")
     parser.add_argument("--evaluate", action="store_true", help="Run comprehensive evaluation")

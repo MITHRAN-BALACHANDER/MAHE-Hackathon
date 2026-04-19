@@ -33,7 +33,7 @@ from model.inference import predict_single, predict_single_with_uncertainty
 from model.config import WEIGHTS_PATH, DATA_DIR, EDGE_ZONES, MC_SAMPLES, HANDOFF_RISK_THRESHOLD
 
 app = FastAPI(
-    title="SignalRoute Model API",
+    title="Cellular Maze Model API",
     description="Connectivity-aware routing model for L4 vehicles -- all PUT endpoints",
     version="1.0.0",
 )

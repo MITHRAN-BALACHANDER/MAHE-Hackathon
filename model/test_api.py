@@ -151,7 +151,7 @@ def test_score_routes():
 
 if __name__ == "__main__":
     print("=" * 60)
-    print("SignalRoute Model API -- Endpoint Tests")
+    print("Cellular Maze Model API -- Endpoint Tests")
     print("=" * 60)
     try:
         test_health()

@@ -1,8 +1,8 @@
-# SignalRoute AI — Enterprise Architecture Overview
+# Cellular Maze -- Enterprise Architecture Overview
 
 ## System Context
 
-SignalRoute AI is a cellular network-aware routing system that scores candidate routes based on predicted signal quality, ETA, and distance. It uses a physics-based ML model, real cell tower data, and Thompson Sampling RL for per-user personalization.
+Cellular Maze is a cellular network-aware routing system that scores candidate routes based on predicted signal quality, ETA, and distance. It uses a physics-based ML model, real cell tower data, and Thompson Sampling RL for per-user personalization.
 
 ```mermaid
 graph TB
@@ -256,7 +256,7 @@ sequenceDiagram
         JWT-->>API: JWT token (24h expiry)
         API-->>FE: TokenResponse
         FE->>FE: Store in localStorage
-        FE->>FE: Set signalroute_first_visit flag
+        FE->>FE: Set cellularmaze_first_visit flag
         FE->>U: Redirect to map + onboarding tour
     else Returning User
         U->>FE: Fill login form

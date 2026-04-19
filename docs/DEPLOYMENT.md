@@ -72,7 +72,7 @@ This starts backend (port 8000) and frontend (port 3000).
 4. Environment variables:
    ```
    MONGO_URI=mongodb+srv://...
-   DB_NAME=signalroute
+   DB_NAME=cellularmaze
    MODEL_URL=http://ml-service:8001
    OSRM_URL=http://router.project-osrm.org
    ```
@@ -94,7 +94,7 @@ This starts backend (port 8000) and frontend (port 3000).
 3. Whitelist IP (or allow all: 0.0.0.0/0)
 4. Get connection string:
    ```
-   mongodb+srv://<user>:<password>@cluster0.xxx.mongodb.net/signalroute
+   mongodb+srv://<user>:<password>@cluster0.xxx.mongodb.net/cellularmaze
    ```
 5. Set as `MONGO_URI` in backend environment
 
@@ -124,7 +124,7 @@ services:
     ports: ["8000:8000"]
     environment:
       - MONGO_URI=mongodb://mongo:27017
-      - DB_NAME=signalroute
+      - DB_NAME=cellularmaze
     depends_on: [mongo]
 
   frontend:
@@ -151,7 +151,7 @@ volumes:
 |----------|---------|---------|-------------|
 | `NEXT_PUBLIC_API_URL` | Frontend | `http://localhost:8000` | Backend API base URL |
 | `MONGO_URI` | Backend | `mongodb://localhost:27017` | MongoDB connection string |
-| `DB_NAME` | Backend | `signalroute` | Database name |
+| `DB_NAME` | Backend | `cellularmaze` | Database name |
 | `MODEL_URL` | Backend | `http://localhost:8001` | ML prediction service URL |
 | `OSRM_URL` | Backend | `http://router.project-osrm.org` | OSRM routing engine URL |
 | `ML_TIMEOUT_S` | Backend | `5.0` | ML call timeout (seconds) |

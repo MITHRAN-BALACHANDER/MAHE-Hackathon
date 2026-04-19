@@ -1,7 +1,7 @@
-# SignalRoute AI: Complete Tech Stack Overview
+# Cellular Maze: Complete Tech Stack Overview
 ### Architecture, Frameworks, and Cloud Infrastructure
 
-This document breaks down the entire technology stack utilized across the SignalRoute AI platform, categorizing each tool and explaining the engineering justification for why it was selected.
+This document breaks down the entire technology stack utilized across the Cellular Maze platform, categorizing each tool and explaining the engineering justification for why it was selected.
 
 ---
 

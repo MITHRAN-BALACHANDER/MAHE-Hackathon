@@ -2,7 +2,7 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
 class Settings(BaseSettings):
-    PROJECT_NAME: str = "SignalRoute API"
+    PROJECT_NAME: str = "Cellular Maze API"
     VERSION: str = "1.0.0"
     API_V1_STR: str = "/api/v1"
 
@@ -12,7 +12,7 @@ class Settings(BaseSettings):
 
     # MongoDB
     MONGO_URI: str = "mongodb://localhost:27017"
-    DB_NAME: str = "signalroute"
+    DB_NAME: str = "cellularmaze"
 
     # Timeouts
     ML_TIMEOUT_S: float = 5.0

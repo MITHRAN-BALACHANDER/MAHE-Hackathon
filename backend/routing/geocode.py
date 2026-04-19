@@ -26,7 +26,7 @@ _NOMINATIM_URL = os.environ.get("NOMINATIM_URL", "https://nominatim.openstreetma
 _NOMINATIM_REVERSE_URL = os.environ.get(
     "NOMINATIM_REVERSE_URL", "https://nominatim.openstreetmap.org/reverse"
 )
-_USER_AGENT = "SignalRoute/1.0 (hackathon; github.com/MAHE-Hackathon)"
+_USER_AGENT = "CellularMaze/1.0 (hackathon; github.com/MAHE-Hackathon)"
 _TIMEOUT_S = 5.0
 
 # Bounding box that biases forward-geocode results toward Bengaluru

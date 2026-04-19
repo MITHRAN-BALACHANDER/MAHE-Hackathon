@@ -1,4 +1,4 @@
-"""Enterprise middleware for SignalRoute API.
+"""Enterprise middleware for Cellular Maze API.
 
 Provides:
   - Request ID injection (X-Request-ID header)

@@ -1,4 +1,4 @@
-"""SignalRoute Backend -- complete FastAPI server.
+"""Cellular Maze Backend -- complete FastAPI server.
 
 Serves three API surfaces:
   /api/*     -- Frontend endpoints (GET/POST for the Next.js UI)
@@ -72,7 +72,7 @@ from backend.api.routes import router as _auth_router
 app.include_router(_auth_router, prefix="/api/v1", tags=["auth"])
 
 # Update app metadata for the full backend
-app.title = "SignalRoute Backend"
+app.title = "Cellular Maze Backend"
 app.description = "Cellular network-aware routing with reinforcement learning"
 app.version = "2.0.0"
 

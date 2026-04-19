@@ -1,4 +1,4 @@
-# SignalRoute Backend
+# Cellular Maze Backend
 
 Cellular network-aware routing backend with reinforcement learning personalization.
 
@@ -77,7 +77,7 @@ docker-compose up --build
 | MODEL_URL | http://localhost:8001 | ML signal prediction service |
 | OSRM_URL | http://router.project-osrm.org | OSRM routing service |
 | MONGO_URI | mongodb://localhost:27017 | MongoDB connection string |
-| DB_NAME | signalroute | Database name |
+| DB_NAME | cellularmaze | Database name |
 
 ## Testing
 

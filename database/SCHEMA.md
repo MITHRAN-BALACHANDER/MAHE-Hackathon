@@ -1,6 +1,6 @@
 # Database Schema
 
-SignalRoute uses MongoDB (via Motor async driver) for persistent storage and file-based datasets for signal/tower data.
+Cellular Maze uses MongoDB (via Motor async driver) for persistent storage and file-based datasets for signal/tower data.
 
 ## MongoDB Collections
 

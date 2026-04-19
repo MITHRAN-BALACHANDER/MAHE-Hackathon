@@ -105,7 +105,7 @@ export default function LoginPage() {
               <MapPin className="text-[#d4af37]" strokeWidth={1.5} size={28} />
             </div>
             <div>
-              <h1 className="text-4xl font-serif tracking-wide">SignalRoute</h1>
+              <h1 className="text-4xl font-serif tracking-wide">Cellular Maze</h1>
               <p className="text-[#aeb6bf] text-sm uppercase tracking-widest mt-1 font-medium">
                 Modern Cartography
               </p>
@@ -172,7 +172,7 @@ export default function LoginPage() {
               <MapPin className="text-[#d4af37]" strokeWidth={1.5} size={24} />
             </div>
             <span className="text-3xl font-serif text-[#1a2530]">
-              SignalRoute
+              Cellular Maze
             </span>
           </div>
 

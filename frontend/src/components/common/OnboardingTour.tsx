@@ -50,8 +50,8 @@ export function OnboardingTour({ onComplete }: Props) {
   const [visible, setVisible] = useState(false);
 
   useEffect(() => {
-    const isFirstVisit = localStorage.getItem("signalroute_first_visit");
-    const tourCompleted = localStorage.getItem("signalroute_tour_done");
+    const isFirstVisit = localStorage.getItem("cellularmaze_first_visit");
+    const tourCompleted = localStorage.getItem("cellularmaze_tour_done");
     if (isFirstVisit && !tourCompleted) {
       // Small delay to let the page render
       const t = setTimeout(() => setVisible(true), 800);
@@ -68,8 +68,8 @@ export function OnboardingTour({ onComplete }: Props) {
   }, [currentStep]);
 
   const handleComplete = useCallback(() => {
-    localStorage.setItem("signalroute_tour_done", "true");
-    localStorage.removeItem("signalroute_first_visit");
+    localStorage.setItem("cellularmaze_tour_done", "true");
+    localStorage.removeItem("cellularmaze_first_visit");
     setVisible(false);
     onComplete();
   }, [onComplete]);

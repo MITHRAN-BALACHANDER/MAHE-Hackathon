@@ -25,6 +25,22 @@ const LEGENDS: Record<ActiveFilter, { title: string; items: { color: string; lab
       { color: "#ef4444", label: "Heavy (congested)" },
     ],
   },
+  weather: {
+    title: "Weather Conditions",
+    items: [
+      { color: "#22c55e", label: "Clear / Sunny" },
+      { color: "#eab308", label: "Cloudy / Drizzle" },
+      { color: "#ef4444", label: "Rain / Storm" },
+    ],
+  },
+  road: {
+    title: "Road Quality",
+    items: [
+      { color: "#22c55e", label: "Good" },
+      { color: "#eab308", label: "Fair" },
+      { color: "#ef4444", label: "Poor" },
+    ],
+  },
 };
 
 export function HeatmapLegend({ filter }: Props) {

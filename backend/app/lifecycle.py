@@ -13,13 +13,13 @@ from backend.db.base import MongoClient
 async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     """Manage application startup and shutdown."""
     # Startup
-    logger.info("Starting SignalRoute API...")
+    logger.info("Starting Cellular Maze API...")
     await MongoClient.connect()
-    logger.info("SignalRoute API ready")
+    logger.info("Cellular Maze API ready")
 
     yield
 
     # Shutdown
-    logger.info("Shutting down SignalRoute API...")
+    logger.info("Shutting down Cellular Maze API...")
     await MongoClient.disconnect()
-    logger.info("SignalRoute API stopped")
+    logger.info("Cellular Maze API stopped")

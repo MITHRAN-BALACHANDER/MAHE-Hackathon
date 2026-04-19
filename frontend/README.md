@@ -1,6 +1,6 @@
-# SignalRoute AI Frontend
+# Cellular Maze Frontend
 
-Dashboard client for SignalRoute AI built with Next.js, TypeScript, Tailwind CSS, Leaflet, Axios, and Chart.js.
+Dashboard client for Cellular Maze built with Next.js, TypeScript, Tailwind CSS, Leaflet, Axios, and Chart.js.
 
 ## Run Locally
 

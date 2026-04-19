@@ -1,6 +1,6 @@
-# SignalRoute AI -- Cellular Network-Aware Routing System
+# Cellular Maze -- Cellular Network-Aware Routing System
 
-An ML-powered navigation platform that recommends routes based on **predicted cellular signal quality** alongside ETA and distance. Traditional routing engines (Google Maps, Waze) optimize purely for time -- SignalRoute adds network awareness to prevent dropped calls, lost connectivity, and dead zone interruptions.
+An ML-powered navigation platform that recommends routes based on **predicted cellular signal quality** alongside ETA and distance. Traditional routing engines (Google Maps, Waze) optimize purely for time -- Cellular Maze adds network awareness to prevent dropped calls, lost connectivity, and dead zone interruptions.
 
 **Problems solved:**
 - Calls dropping mid-route through dead zones
@@ -158,7 +158,7 @@ The user adjusts a preference slider (0 = pure speed, 100 = pure signal) and the
 ## Project Structure
 
 ```
-signalroute-ai/
+cellular-maze/
 |-- README.md
 |-- analysis.md
 |-- docker-compose.yml
@@ -516,7 +516,7 @@ Full deployment guide: [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md)
 |----------|---------|-------------|
 | `NEXT_PUBLIC_API_URL` | `http://localhost:8001` | Backend URL for frontend |
 | `MONGO_URI` | `mongodb://localhost:27017` | MongoDB connection string |
-| `DB_NAME` | `signalroute` | Database name |
+| `DB_NAME` | `cellularmaze` | Database name |
 | `MODEL_URL` | `http://localhost:8002` | ML prediction service |
 | `OSRM_URL` | `http://router.project-osrm.org` | OSRM routing engine (fallback) |
 | `TOMTOM_API_KEY` | _(required)_ | TomTom Routing API key |
